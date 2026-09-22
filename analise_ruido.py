@@ -13,36 +13,59 @@ NOME_ARQUIVO = "dados_marcha_paciente.csv"
 dados_memoria = {}
 tempo_inicial = None
 
-def position_handler(address, x, y, z):
-    global tempo_inicial
+# IDs dos trackers que queremos analisar (ignorar head e 1/quadril)
+TRACKERS_INTERESSE = {"2", "3", "4", "5"}
+
+PREFIXO_POSICAO = "/tracking/trackers/"
+
+# Contador de pacotes gravados para feedback no terminal
+pacotes_gravados = 0
+
+def position_handler(address, *args):
+    global tempo_inicial, pacotes_gravados
+    
+    # Filtra: só pega endereços de posição
+    if not (address.startswith(PREFIXO_POSICAO) and address.endswith("/position")):
+        return
+    
+    # Extrai o ID do tracker
+    partes = address.split("/")
+    if len(partes) < 4:
+        return
+    tracker_id = partes[3]
+    
+    # Ignora trackers fora da lista de interesse
+    if tracker_id not in TRACKERS_INTERESSE:
+        return
+    
+    # Precisa de exatamente 3 valores (x, y, z)
+    if len(args) != 3:
+        return
+    
+    x, y, z = args
     tempo_atual = time.time()
     
     if tempo_inicial is None:
         tempo_inicial = tempo_atual
         
-    # Tempo relativo a partir do início da gravação (facilita o gráfico)
     tempo_relativo = tempo_atual - tempo_inicial
     
-    # O endereço é algo como /tracking/trackers/1/position. Vamos extrair o '1'
-    tracker_id = address.split("/")[-2] 
-    
-    # Inicializa a lista para esse tracker, se ainda não existir
     if tracker_id not in dados_memoria:
         dados_memoria[tracker_id] = {"t": [], "x": [], "y": [], "z": []}
+        print(f"  -> Tracker {tracker_id} detectado!")
         
-    # Adiciona na memória para a Transformada de Fourier
     dados_memoria[tracker_id]["t"].append(tempo_relativo)
     dados_memoria[tracker_id]["x"].append(x)
     dados_memoria[tracker_id]["y"].append(y)
     dados_memoria[tracker_id]["z"].append(z)
     
-    # Salva no arquivo CSV, assim como no seu código original
     with open(NOME_ARQUIVO, mode='a', newline='') as arquivo:
         escritor = csv.writer(arquivo)
         escritor.writerow([tempo_atual, tracker_id, x, y, z])
-        
-    # Descomente a linha abaixo se quiser ver no terminal enquanto grava
-    # print(f"Gravado -> Tracker {tracker_id} | X: {x:.3f}")
+    
+    pacotes_gravados += 1
+    if pacotes_gravados % 500 == 0:
+        print(f"  {pacotes_gravados} pacotes gravados...")
 
 def plotar_analise_frequencia():
     print("\nGerando gráficos de análise de ruído (FFT)...")
@@ -106,10 +129,12 @@ def main():
         escritor.writerow(['Timestamp', 'Tracker_ID', 'Pos_X', 'Pos_Y', 'Pos_Z'])
 
     disp = Dispatcher()
-    disp.map("/tracking/trackers/*/position", position_handler)
+    # Usa o handler padrão (mesmo método que funciona no slimevr.py)
+    disp.set_default_handler(position_handler)
 
     server = ThreadingOSCUDPServer(("127.0.0.1", 9000), disp)
     print(f"Servidor OSC iniciado. Gravando dados no arquivo '{NOME_ARQUIVO}'...")
+    print(f"Monitorando trackers: {', '.join(sorted(TRACKERS_INTERESSE))}")
     print("-> Ande / faça o movimento para gerar dados de marcha.")
     print("-> Pressione 'Ctrl + C' quando terminar para gerar os gráficos.")
     

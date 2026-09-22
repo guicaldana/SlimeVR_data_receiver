@@ -1,0 +1,11 @@
+# Ambientes virtuais
+.venv/
+env/
+venv/
+
+# Bytecode Python
+__pycache__/
+*.pyc
+
+# Arquivos de dados gerados em execuções locais
+*.csv
