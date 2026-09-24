@@ -136,9 +136,9 @@ def main():
     # O handler padrão agora lida com a captura das posições e descarte do resto
     disp.set_default_handler(filter_handler)
 
-    server = ThreadingOSCUDPServer(("127.0.0.1", 9000), disp)
+    server = ThreadingOSCUDPServer(("127.0.0.1", 39539), disp)
     print("Iniciando modo de Descoberta de Pés...")
-    print("Aguardando dados de /position na porta 9000 (Ctrl+C para sair).")
+    print("Aguardando dados de /position na porta 39539 (Ctrl+C para sair).")
     
     server.timeout = 0
     try:

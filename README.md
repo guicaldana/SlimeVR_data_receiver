@@ -54,8 +54,30 @@ uv run python analise_ruido.py
 
 ---
 
-### `calculo_passo.py` — Estimativa de Passo, Altura e Postura (Principal)
-Script completo que combina os trackers dos tornozelos (IDs 2 e 3) e do peito (ID 6). Analisa tanto o **comprimento** quanto a **altura da passada (elevação/clearance do pé)**, identifica o pé em balanço (Esquerdo vs Direito), calcula a angulação postural do tronco, remove meias-voltas e outliers (MAD - Median Absolute Deviation), exibindo métricas ao vivo no terminal e gerando relatórios completos com gráficos e CSV.
+### `analise_cabeca.py` — Rotação da Cabeça e Atenção Visual (VMC Protocol)
+Script específico para monitorar a inclinação vertical da cabeça (Pitch). Como o VRChat OSC não possui suporte nativo a tracker de cabeça, este script utiliza o protocolo **VMC (Virtual Motion Capture)** na porta **39539**, recebendo os dados do osso `Head` diretamente do SlimeVR.
+
+**Como rodar:**
+```powershell
+uv run python analise_cabeca.py
+```
+
+**Como usar:**
+1. No SlimeVR, vá em **Opções > OSC > VMC** (conforme sua tela de captura virtual de movimentos) e deixe **Ativado** com a porta de saída padrão **39539**.
+2. Execute o script. O terminal exibirá um medidor gráfico ao vivo indicando o ângulo do olhar e o estado correspondente (Neutro, Cima, Baixo, Muito Baixo).
+3. Pressione `Ctrl + C` para finalizar.
+4. Gera um relatório estatístico (tempo e porcentagem em cada zona de olhar, ângulo médio, desvio padrão), salva os dados em `resultado_rotacao_cabeca.csv` e abre os gráficos (trajetória temporal com zonas coloridas, gráfico de barras percentual e histograma).
+
+---
+
+### `calculo_passo.py` — Sistema Unificado de Marcha, Postura e Olhar (Principal)
+Script completo e unificado que combina os dados da **Porta 9000** (Tornozelos 2 e 3 + Peito 6) e da **Porta 39539** (Cabeça via protocolo VMC). 
+
+Analisa simultaneamente:
+- **Comprimento da passada (m):** Distância horizontal com filtro passa-baixa e remoção de outliers via MAD.
+- **Altura da passada (cm):** Elevação vertical de cada tornozelo, identificação automática do pé em balanço (`ESQ` ou `DIR`) e índice de simetria.
+- **Postura do tronco (°):** Inclinação frontal do peito e estabilidade postural.
+- **Atenção visual e orientação da cabeça (°):** Inclinação do olhar (Pitch), tempo e porcentagem em cada zona (Neutro, Baixo, Muito Baixo/Chão, Cima).
 
 **Como rodar:**
 ```powershell
@@ -63,15 +85,23 @@ uv run python calculo_passo.py
 ```
 
 **Como usar:**
-1. Execute o script com o SlimeVR conectado.
-2. Caminhe pelo ambiente. O terminal mostrará ao vivo a distância entre pés, barra visual, elevação instantânea dos pés (`E=15.2cm D=0.0cm`) e inclinação do peito (ex: `Tronco: -2.1° (Ereto ✓)`).
+1. Mantenha tanto o **VRChat OSC** (porta 9000) quanto o **VMC** (porta 39539) ativados no SlimeVR.
+2. Execute o script e caminhe normalmente. O terminal exibirá em tempo real:
+   ```
+   Tempo: 12.5s | Passos: 0.785m [######------] | Alt: E=15.2cm D= 0.0cm | Tronco: -2.1° | Cabeça: -12.4° NEUTRO [-]
+   ```
 3. Pressione `Ctrl + C` para finalizar.
-4. Veja o relatório estatístico detalhado (comprimento médio, altura média por pé e índice de simetria), a tabela de passos e a janela com 4 gráficos sincronizados:
-   - Distância horizontal entre tornozelos (comprimento)
-   - Trajetória vertical dos tornozelos (altura/clearance do pé esquerdo vs direito)
-   - Inclinação postural do tronco
-   - Gráfico de barras comparativo (Comprimento em m vs Altura em cm por passada)
-5. O resultado é salvo automaticamente em `resultado_passos.csv`.
+4. Gera um relatório estatístico completo no terminal, cruza todas as variáveis em uma **tabela passo a passo**, salva os dados em `resultado_completo_marcha.csv` e abre uma janela com **5 gráficos sincronizados**.
+
+---
+
+### `diagnostico_rede.py` — Diagnóstico de Rede e Pacotes SlimeVR
+Monitora simultaneamente as portas 9000 e 39539 em tempo real, exibindo taxas de pacotes por segundo, trackers conectados e ossos ativos para verificar se todos os sensores estão se comunicando corretamente.
+
+**Como rodar:**
+```powershell
+uv run python diagnostico_rede.py
+```
 
 ## 🧠 Como Funciona
 
