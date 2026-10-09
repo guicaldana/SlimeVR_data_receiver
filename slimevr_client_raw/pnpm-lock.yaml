@@ -1,0 +1,33 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      flatbuffers:
+        specifier: 22.10.26
+        version: 22.10.26
+      solarxr-protocol:
+        specifier: file:vendor/solarxr-protocol-00c38a6.tgz
+        version: file:vendor/solarxr-protocol-00c38a6.tgz
+
+packages:
+
+  flatbuffers@22.10.26:
+    resolution: {integrity: sha512-sdO3emf/BlLfOogW6KwHuXg16APR/E86jNacDXfSInPzt8SSEzxlHcqDekfM/IJ1CGC5bvDksfNufNhS8h1FRA==}
+
+  solarxr-protocol@file:vendor/solarxr-protocol-00c38a6.tgz:
+    resolution: {integrity: sha512-DiPnl2v542dTD9C16J+hx741w6Y39ueHg7Ekb3ggt4q5YGYF4qBN/ptF/6uyWnw/r4mHk+9nI+lVV02o3qXrxQ==, tarball: file:vendor/solarxr-protocol-00c38a6.tgz}
+    version: 0.0.0
+
+snapshots:
+
+  flatbuffers@22.10.26: {}
+
+  solarxr-protocol@file:vendor/solarxr-protocol-00c38a6.tgz:
+    dependencies:
+      flatbuffers: 22.10.26
