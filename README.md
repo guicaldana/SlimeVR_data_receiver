@@ -30,17 +30,10 @@ uv pip install python-osc numpy matplotlib
 
 ```text
 SlimeVR_data_receiver/
-├── monitor_passadas.py            # Principal: Heel-Strike (IMU ZUPT) sincronizado com Distância (OSC)
+├── calculo_passo.py               # Principal: Marcha unificada com Heel-Strike da IMU (SolarXR), OSC e VMC
+├── monitor_passadas.py            # Monitor em tempo real de passadas sincronizadas
 ├── slimevr.py                     # Modo descoberta básico de trackers
 ├── analises/                      # Scripts de pós-processamento, altura e comparações
-│   ├── monitor_altura_tempo_real.py
-│   ├── calculo_passo.py
-│   ├── captura_e_comparacao_zupt_osc.py
-│   ├── analise_altura_passada.py
-│   ├── analise_passada_zupt.py
-│   ├── analise_cabeca.py
-│   ├── analise_ruido.py
-│   └── comparacao_passos.py
 ├── dados/                         # Arquivos CSV gravados
 ├── archives/                      # Arquivos compactados e legados
 └── slimevr_client_raw/            # Bridge Node.js do protocolo SolarXR WebSocket
@@ -48,11 +41,23 @@ SlimeVR_data_receiver/
 
 ## 📂 Scripts Principais (Raiz)
 
-### `monitor_passadas.py` — Estimador de Comprimento de Passada (Heel-Strike IMU + OSC)
-Sincroniza em tempo real o momento exato do impacto do calcanhar no solo detectado pelas **IMUs físicas (Porta 21110)** com a **distância horizontal Euclidiana entre os pés no OSC (Porta 9000)**.
-- **Detecção do Heel-Strike:** Identifica o toque do pé no solo via aceleração inercial e ZUPT.
-- **Comprimento da Passada:** Mede a separação horizontal instantânea entre os pés exatamente no momento do contato.
-- **Imunidade Postural:** Totalmente independente de inclinações de tronco, postura ou altura da cabeça.
+### `calculo_passo.py` — Sistema Unificado de Marcha com Heel-Strike SolarXR (Principal)
+Combina a precisão inercial das **IMUs físicas (Porta 21110)** para identificar o momento exato do impacto do calcanhar (**Heel-Strike**) com os dados cinemáticos do **OSC (Porta 9000)** e da **Cabeça/Olhar via VMC (Porta 39539)**.
+- **Timing Preciso via IMU:** Identifica o instante exato em que cada pé colide com o chão através dos picos de aceleração linear das IMUs dos pés.
+- **Comprimento do Passo:** Amostra a distância horizontal Euclidiana entre os pés no exato milissegundo do contato inicial.
+- **Clearance / Altura do Passo:** Mede a elevação vertical que o pé atingiu durante a fase de balanço que antecedeu o impacto.
+- **Postura do Tronco & Atenção Visual:** Inclinação do peito (Pitch) e orientação do olhar/cabeça.
+- **Relatório e Gráficos:** Gera tabela detalhada passo a passo, estatísticas de simetria, salva em `dados/resultado_completo_marcha.csv` e plota gráficos sincronizados.
+
+**Como rodar:**
+```powershell
+uv run python calculo_passo.py
+```
+
+---
+
+### `monitor_passadas.py` — Monitor em Tempo Real de Passadas (Heel-Strike IMU + OSC)
+Monitora continuamente os passos em tempo real durante a caminhada, exibindo no terminal o comprimento e os impactos.
 
 **Como rodar:**
 ```powershell
