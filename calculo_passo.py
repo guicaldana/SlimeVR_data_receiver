@@ -307,10 +307,8 @@ def classificar_estado_usuario(p_esq, p_dir, p_quad, rot_coxa_e, rot_coxa_d, a_e
     2. Movimento: PARADO vs CAMINHANDO / ATIVO
     3. Cota do chão dinâmico (imune à inclinação do tronco)
     """
-    # Piso instantâneo: âncora no pé que está apoiado no chão
+    # 1. Piso Dinâmico de Apoio: em marcha ou apoio unipedal, o chão é o pé mais baixo
     chao_instantaneo = min(p_esq[1], p_dir[1])
-    if chao_base_calibrado is not None:
-        chao_instantaneo = min(chao_instantaneo, chao_base_calibrado)
 
     # 1. Postura (EM PÉ vs SENTADO)
     if p_quad is not None:
@@ -444,15 +442,16 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
     y_esq_filt = aplicar_filtro(np.interp(t_comum, t_esq, y_esq), FREQUENCIA_CORTE_POS, taxa_amostragem)
     y_dir_filt = aplicar_filtro(np.interp(t_comum, t_dir, y_dir), FREQUENCIA_CORTE_POS, taxa_amostragem)
 
-    # 1. Calibração inicial de chão (primeiros 1.5s)
+    # 1. Calibração inicial de compensação de montagem entre os pés (primeiros 1.5s)
     mask_calib = t_comum <= min(t_comum[0] + CALIB_DURACAO_S, t_comum[-1])
-    piso_base = min(np.min(y_esq_filt[mask_calib]), np.min(y_dir_filt[mask_calib])) if np.any(mask_calib) else min(y_esq_filt[0], y_dir_filt[0])
+    delta_pes = (np.mean(y_esq_filt[mask_calib]) - np.mean(y_dir_filt[mask_calib])) if np.any(mask_calib) else 0.0
+    y_esq_corr = y_esq_filt - delta_pes
 
-    # 2. Piso Dinâmico de Apoio (Pé de apoio instantâneo como cota zero física)
-    chao_dinamico = np.minimum(np.minimum(y_esq_filt, y_dir_filt), piso_base)
+    # 2. Piso Dinâmico de Apoio: o chão físico verdadeiro é o pé de apoio mais baixo
+    chao_dinamico = np.minimum(y_esq_corr, y_dir_filt)
 
     # Alturas reais em cm (totalmente imunes à inclinação do tronco)
-    elev_esq = np.maximum(0.0, y_esq_filt - chao_dinamico) * 100.0
+    elev_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
     elev_dir = np.maximum(0.0, y_dir_filt - chao_dinamico) * 100.0
 
     # 3. Trajetória do Quadril (se houver)
