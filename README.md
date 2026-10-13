@@ -31,6 +31,7 @@ uv pip install python-osc numpy matplotlib
 ```text
 SlimeVR_data_receiver/
 ├── calculo_passo.py               # Principal: Marcha unificada com Heel-Strike da IMU (SolarXR), OSC e VMC
+├── plotar_todos_dados.py          # Visualizador completo de todos os canais de dados simultâneos
 ├── avaliar_altura_pe.py           # Avaliador de Altura do Pé e Estudo de Referência no Quadril (Hip)
 ├── monitor_passadas.py            # Monitor em tempo real de passadas sincronizadas
 ├── slimevr.py                     # Modo descoberta básico de trackers
@@ -41,6 +42,21 @@ SlimeVR_data_receiver/
 ```
 
 ## 📂 Scripts Principais (Raiz)
+
+### `plotar_todos_dados.py` — Gravador e Visualizador de Todos os Dados
+Captura simultaneamente todas as fontes disponíveis e plota uma visão geral completa em 5 painéis:
+1. **Posições Verticais Y:** Pés (2, 3), Quadril (1) e Peito (6).
+2. **Separação Horizontal dos Pés:** Distância no plano $X$-$Z$.
+3. **Magnitude de Aceleração das IMUs:** Impactos físicos dos pés (SolarXR).
+4. **Componentes Direcionais da Aceleração:** $A_y$ vertical vs $A_z$ anterior de ambos os pés.
+5. **Inclinações Angulares (Pitch):** Peito, Quadril e Cabeça.
+
+**Como rodar:**
+```powershell
+uv run python plotar_todos_dados.py
+```
+
+---
 
 ### `calculo_passo.py` — Sistema Unificado de Marcha com Heel-Strike SolarXR (Principal)
 Combina a precisão inercial das **IMUs físicas (Porta 21110)** para identificar o momento exato do impacto do calcanhar (**Heel-Strike**) com os dados cinemáticos do **OSC (Porta 9000)** e da **Cabeça/Olhar via VMC (Porta 39539)**.
