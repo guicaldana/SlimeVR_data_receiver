@@ -295,9 +295,13 @@ def mostrar_feedback():
         badge, _ = classificar_olhar(p_cabeca)
         str_cabeca = f" | Olhar: {p_cabeca:+4.1f}° {badge}"
 
-    str_imu = f" | IMU: {ult_imp}" if (n_imu_e > 0 or n_imu_d > 0) else " | IMU: conectando..."
+    # Elevação instantânea baseada no pé de apoio
+    chao_ao_vivo = min(p_esq[1], p_dir[1])
+    alt_e_cm = max(0.0, (p_esq[1] - chao_ao_vivo) * 100)
+    alt_d_cm = max(0.0, (p_dir[1] - chao_ao_vivo) * 100)
+    str_alt = f" | Alt: E={alt_e_cm:3.0f}cm D={alt_d_cm:3.0f}cm"
 
-    print(f"\r  ⏱ {tempo:4.1f}s | Pés: {dist:.3f}m [{barra}]{str_imu}{str_peito}{str_cabeca}  ", end="", flush=True)
+    print(f"\r  ⏱ {tempo:4.1f}s | Pés: {dist:.3f}m [{barra}]{str_alt}{str_imu}{str_peito}{str_cabeca}  ", end="", flush=True)
 
 
 # ----------------- PROCESSAMENTO DE SINAIS E HEEL-STRIKE -----------------
@@ -331,11 +335,17 @@ def calcular_sinais_tornozelos(dados_esq, dados_dir):
     y_esq_filt = aplicar_filtro(np.interp(t_comum, t_esq, y_esq), FREQUENCIA_CORTE_POS, taxa_amostragem)
     y_dir_filt = aplicar_filtro(np.interp(t_comum, t_dir, y_dir), FREQUENCIA_CORTE_POS, taxa_amostragem)
 
-    chao_esq = np.percentile(y_esq_filt, 5)
-    chao_dir = np.percentile(y_dir_filt, 5)
+    # Abordagem de Chão Dinâmico do Pé de Apoio:
+    # 1. Calibração inicial do desvio estático entre os dois pés (primeiros 1.5s com pés no chão)
+    mask_calib = t_comum <= min(t_comum[0] + 1.5, t_comum[-1])
+    delta_calib = np.mean(y_esq_filt[mask_calib]) - np.mean(y_dir_filt[mask_calib]) if np.any(mask_calib) else 0.0
 
-    elev_esq = np.maximum(0.0, y_esq_filt - chao_esq)
-    elev_dir = np.maximum(0.0, y_dir_filt - chao_dir)
+    # 2. O chão verdadeiro em cada instante é o pé apoiado (mínimo vertical compensado)
+    y_esq_corr = y_esq_filt - delta_calib
+    chao_dinamico = np.minimum(y_esq_corr, y_dir_filt)
+
+    elev_esq = np.maximum(0.0, y_esq_corr - chao_dinamico)
+    elev_dir = np.maximum(0.0, y_dir_filt - chao_dinamico)
 
     return t_comum, dist, elev_esq, elev_dir, taxa_amostragem
 
@@ -784,3 +794,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

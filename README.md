@@ -31,6 +31,7 @@ uv pip install python-osc numpy matplotlib
 ```text
 SlimeVR_data_receiver/
 ├── calculo_passo.py               # Principal: Marcha unificada com Heel-Strike da IMU (SolarXR), OSC e VMC
+├── avaliar_altura_pe.py           # Avaliador de Altura do Pé e Estudo de Referência no Quadril (Hip)
 ├── monitor_passadas.py            # Monitor em tempo real de passadas sincronizadas
 ├── slimevr.py                     # Modo descoberta básico de trackers
 ├── analises/                      # Scripts de pós-processamento, altura e comparações
@@ -45,13 +46,26 @@ SlimeVR_data_receiver/
 Combina a precisão inercial das **IMUs físicas (Porta 21110)** para identificar o momento exato do impacto do calcanhar (**Heel-Strike**) com os dados cinemáticos do **OSC (Porta 9000)** e da **Cabeça/Olhar via VMC (Porta 39539)**.
 - **Timing Preciso via IMU:** Identifica o instante exato em que cada pé colide com o chão através dos picos de aceleração linear das IMUs dos pés.
 - **Comprimento do Passo:** Amostra a distância horizontal Euclidiana entre os pés no exato milissegundo do contato inicial.
-- **Clearance / Altura do Passo:** Mede a elevação vertical que o pé atingiu durante a fase de balanço que antecedeu o impacto.
+- **Clearance / Altura do Passo:** Mede a elevação vertical pelo pé de apoio dinâmico ($\min(Y_e, Y_d)$).
 - **Postura do Tronco & Atenção Visual:** Inclinação do peito (Pitch) e orientação do olhar/cabeça.
-- **Relatório e Gráficos:** Gera tabela detalhada passo a passo, estatísticas de simetria, salva em `dados/resultado_completo_marcha.csv` e plota gráficos sincronizados.
+- **Relatório e Gráficos:** Gera tabela detalhada passo a passo, salva em `dados/resultado_completo_marcha.csv` e plota gráficos sincronizados.
 
 **Como rodar:**
 ```powershell
 uv run python calculo_passo.py
+```
+
+---
+
+### `avaliar_altura_pe.py` — Avaliador de Altura do Pé (Estudo da Referência no Quadril)
+Script dedicado para testar a altura e elevação dos pés em situações livres (estático, sentado com pé sobre caixa de 6 cm, agachamentos, elevações livres). Compara simultaneamente **3 referências de altura**:
+1. **Chão Estático Inicial (Tara 2.0s):** $H = Y(t) - Y_{\text{solo\_inicial}}$
+2. **Diferencial Pé-com-Pé:** Diferença entre o pé elevado e o pé de apoio.
+3. **Referência no Quadril (Hip / Tracker 1):** Mede o encurtamento vertical da distância Pé $\to$ Quadril, desacoplando o movimento das inclinações superiores de tronco e cabeça.
+
+**Como rodar:**
+```powershell
+uv run python avaliar_altura_pe.py
 ```
 
 ---
