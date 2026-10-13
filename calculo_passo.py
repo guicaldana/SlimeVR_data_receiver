@@ -41,11 +41,22 @@ FREQUENCIA_CORTE_POS = 5.0   # Hz para suavização das trajetórias espaciais
 FREQUENCIA_CORTE_ACC = 12.0  # Hz para sinal de aceleração das IMUs
 ORDEM_FILTRO = 2
 
-# Detecção de Heel-Strike via Acelerômetro SolarXR
-LIMIAR_IMPACTO_ACC = 5.0      # m/s² mínimo no acelerômetro para considerar impacto mecânico
-PROEMINENCIA_IMPACTO = 1.8    # m/s² de destaque do pico de impacto
-DISTANCIA_MINIMA_PASSO = 0.25 # metros mínimos entre os pés no instante do impacto
-LIMIAR_MAD = 4.5              # Z-score modificado para detecção de outliers
+# ==================== MODO CLÍNICO (PARKINSON) ====================
+# Ajustado para alta sensibilidade: detecta toques suaves (flat-foot / antepé)
+# e passos curtos (microbasia de 10 a 25 cm) típicos de Doença de Parkinson
+MODO_CLINICO_PARKINSON = True
+
+if MODO_CLINICO_PARKINSON:
+    LIMIAR_IMPACTO_ACC = 1.8      # m/s² (sensível a contatos suaves sem choque forte de calcanhar)
+    PROEMINENCIA_IMPACTO = 0.6    # m/s² (destaque do pico de impacto)
+    DISTANCIA_MINIMA_PASSO = 0.10 # metros mínimos (10 cm - captura passos curtos e microbasia)
+    DIST_MIN_MESMO_PE_S = 0.28    # segundos mínimos entre passos do mesmo pé (suporta festinação rápida)
+else:
+    LIMIAR_IMPACTO_ACC = 4.5      # m/s² (adultos saudáveis com heel-strike vigoroso)
+    PROEMINENCIA_IMPACTO = 1.5    # m/s²
+    DISTANCIA_MINIMA_PASSO = 0.25 # metros mínimos (25 cm)
+    DIST_MIN_MESMO_PE_S = 0.45    # segundos mínimos
+LIMIAR_MAD = 4.5                  # Z-score modificado para detecção de outliers
 
 # Limiares de classificação postural
 LIMIAR_QUADRIL_EM_PE = 0.65   # metros acima do chão (se > 0.65m = Em Pé, se <= 0.65m = Sentado)
@@ -384,9 +395,20 @@ def mostrar_feedback():
         p_esq, p_dir, p_quad, r_coxa_e, r_coxa_d, a_e, a_d, var_dist
     )
 
-    # Altura REAL dos pés (Imune à inclinação do corpo por âncora de apoio)
-    alt_e_cm = max(0.0, (p_esq[1] - chao_inst) * 100)
-    alt_d_cm = max(0.0, (p_dir[1] - chao_inst) * 100)
+    # 1. Altura Imune à Inclinação: Referência Pélvica (Quadril -> Pé)
+    # Como o membro inferior (fêmur + tíbia) tem comprimento rígido,
+    # inclinações do tronco deslocam Quadril e Pés juntos, cancelando 100% o artefato.
+    if p_quad is not None:
+        dist_qp_esq = p_quad[1] - p_esq[1]
+        dist_qp_dir = p_quad[1] - p_dir[1]
+        # O pé apoiado é o que mantém a perna em extensão (maior distância ao quadril)
+        l_apoio = max(dist_qp_esq, dist_qp_dir)
+        alt_e_cm = max(0.0, (l_apoio - dist_qp_esq) * 100.0)
+        alt_d_cm = max(0.0, (l_apoio - dist_qp_dir) * 100.0)
+    else:
+        # Fallback se tracker de quadril não estiver presente
+        alt_e_cm = max(0.0, (p_esq[1] - chao_inst) * 100.0)
+        alt_d_cm = max(0.0, (p_dir[1] - chao_inst) * 100.0)
 
     # Papel instantâneo de cada pé
     if alt_e_cm < 1.8 and alt_d_cm < 1.8:
@@ -450,11 +472,7 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
     # 2. Piso Dinâmico de Apoio: o chão físico verdadeiro é o pé de apoio mais baixo
     chao_dinamico = np.minimum(y_esq_corr, y_dir_filt)
 
-    # Alturas reais em cm (totalmente imunes à inclinação do tronco)
-    elev_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
-    elev_dir = np.maximum(0.0, y_dir_filt - chao_dinamico) * 100.0
-
-    # 3. Trajetória do Quadril (se houver)
+    # 3. Trajetória do Quadril e Altura Imune à Inclinação (Referência Pélvica)
     tem_quad = len(d_quad["t"]) > 10
     if tem_quad:
         t_quad = np.array(d_quad["t"])
@@ -462,7 +480,16 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
         y_quad_filt = aplicar_filtro(np.interp(t_comum, t_quad, y_quad), FREQUENCIA_CORTE_POS, taxa_amostragem)
         alt_quadril = (y_quad_filt - chao_dinamico) * 100.0
         posturas = np.where(alt_quadril >= (LIMIAR_QUADRIL_EM_PE * 100), "EM PÉ", "SENTADO")
+
+        # Distância Quadril -> Pé cancela 100% de qualquer inclinação de tronco/cabeça
+        dist_qp_e = y_quad_filt - y_esq_corr
+        dist_qp_d = y_quad_filt - y_dir_filt
+        l_apoio = np.maximum(dist_qp_e, dist_qp_d)
+        elev_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
+        elev_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
     else:
+        elev_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
+        elev_dir = np.maximum(0.0, y_dir_filt - chao_dinamico) * 100.0
         alt_quadril = np.full_like(t_comum, 90.0)
         posturas = np.full_like(t_comum, "EM PÉ", dtype=object)
 
@@ -471,10 +498,14 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
 
 def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
     """
-    Detecta o timing exato de cada Heel-Strike a partir dos impactos das IMUs.
+    Detecta o timing exato de cada Heel-Strike / Initial Contact de forma híbrida:
+    1. Impacto inercial SolarXR (alta precisão para contatos mecânicos)
+    2. Suporte a toques suaves e passos curtos de Parkinson (microbasia >= 10 cm)
+    3. Fusão com expansão cinemática se o contato for de pé plano (flat-foot) sem choque brusco
     """
     eventos_impacto = []
 
+    # 1. Detecção inercial das IMUs
     for lado in ("ESQ", "DIR"):
         t_imu = np.array(dados_imu[lado]["t"])
         acc_imu = np.array(dados_imu[lado]["acc"])
@@ -485,8 +516,7 @@ def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
         acc_interp = np.interp(t_comum, t_imu, acc_imu)
         acc_filtrada = aplicar_filtro(acc_interp, FREQUENCIA_CORTE_ACC, taxa_amostragem)
 
-        # Distância mínima entre passos do mesmo pé: ~0.45s
-        dist_min_pts = int(taxa_amostragem * 0.45)
+        dist_min_pts = int(taxa_amostragem * DIST_MIN_MESMO_PE_S)
 
         picos, props = find_peaks(
             acc_filtrada,
@@ -509,28 +539,40 @@ def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
                     "comprimento_m": dist_no_impacto
                 })
 
-    if len(eventos_impacto) < 2:
-        print("\n[Aviso] Dados de impacto SolarXR insuficientes. Usando detecção geométrica clássica...")
-        intervalo_min = int(taxa_amostragem * 0.3)
-        dist_filt = aplicar_filtro(dist_sinal, FREQUENCIA_CORTE_POS, taxa_amostragem)
-        picos_geom, _ = find_peaks(
-            dist_filt,
-            height=DISTANCIA_MINIMA_PASSO,
-            distance=intervalo_min,
-            prominence=0.08
-        )
-        tempos = t_comum[picos_geom]
-        comprimentos = dist_filt[picos_geom]
-        impactos = [0.0] * len(tempos)
-        pes_estimados = ["?"] * len(tempos)
-        return tempos, comprimentos, impactos, pes_estimados
+    # 2. Picos cinemáticos de abertura (máxima extensão / ZUPT)
+    intervalo_min = int(taxa_amostragem * 0.25)
+    dist_filt = aplicar_filtro(dist_sinal, FREQUENCIA_CORTE_POS, taxa_amostragem)
+    picos_geom, _ = find_peaks(
+        dist_filt,
+        height=DISTANCIA_MINIMA_PASSO,
+        distance=intervalo_min,
+        prominence=0.035
+    )
+
+    # 3. Fusão Híbrida: resgata passos suaves (flat-foot / arrastados) que não atingiram o limiar inercial
+    for g_idx in picos_geom:
+        t_g = t_comum[g_idx]
+        d_g = dist_filt[g_idx]
+
+        tem_impacto_proximo = any(abs(ev["tempo"] - t_g) <= 0.16 for ev in eventos_impacto)
+        if not tem_impacto_proximo:
+            eventos_impacto.append({
+                "tempo": t_g,
+                "pe": "SUAVE",
+                "impacto_ms2": 0.0,
+                "idx": g_idx,
+                "comprimento_m": d_g
+            })
+
+    if len(eventos_impacto) == 0:
+        return np.array([]), np.array([]), np.array([]), np.array([])
 
     eventos_impacto.sort(key=lambda ev: ev["tempo"])
 
-    # Remove eventos duplicados excessivamente próximos (< 0.20s)
+    # Remove duplicados excessivamente próximos (< 0.15s)
     eventos_filtrados = []
     for ev in eventos_impacto:
-        if not eventos_filtrados or (ev["tempo"] - eventos_filtrados[-1]["tempo"]) >= 0.20:
+        if not eventos_filtrados or (ev["tempo"] - eventos_filtrados[-1]["tempo"]) >= 0.15:
             eventos_filtrados.append(ev)
 
     tempos = np.array([ev["tempo"] for ev in eventos_filtrados])
