@@ -300,6 +300,7 @@ def mostrar_feedback():
     alt_e_cm = max(0.0, (p_esq[1] - chao_ao_vivo) * 100)
     alt_d_cm = max(0.0, (p_dir[1] - chao_ao_vivo) * 100)
     str_alt = f" | Alt: E={alt_e_cm:3.0f}cm D={alt_d_cm:3.0f}cm"
+    str_imu = f" | IMU: {ult_imp}" if (n_imu_e > 0 or n_imu_d > 0) else " | IMU: conectando..."
 
     print(f"\r  ⏱ {tempo:4.1f}s | Pés: {dist:.3f}m [{barra}]{str_alt}{str_imu}{str_peito}{str_cabeca}  ", end="", flush=True)
 
