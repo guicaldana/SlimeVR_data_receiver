@@ -485,30 +485,34 @@ def mostrar_feedback():
     d_ap, larg_lat = calcular_projecao_anteroposterior(p_esq, p_dir, r_quad, p_quad)
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
-    # 2. Altura Pélvica Imune à Inclinação (Eq. 1.3 da Nota Técnica)
+    # 2. Folga Real do Solado ao Chão (Foot Clearance) e Elevação do Tornozelo
+    chao_dinamico_inst = min(p_esq[1], p_dir[1] - offset_calib_pernas)
+
+    # Folga Real da Sola do calçado ao solo (True Foot Clearance - esperado: 1.5 a 4.5 cm)
+    clearance_e_raw = max(0.0, (p_esq[1] - chao_dinamico_inst) * 100.0)
+    clearance_d_raw = max(0.0, ((p_dir[1] - offset_calib_pernas) - chao_dinamico_inst) * 100.0)
+
+    # Elevação Articular do Tornozelo por Flexão do Joelho (esperado: 10 a 18 cm)
     if p_quad is not None:
         dist_qp_e = p_quad[1] - p_esq[1]
         dist_qp_d = (p_quad[1] - p_dir[1]) + offset_calib_pernas
         l_apoio = max(dist_qp_e, dist_qp_d)
-        alt_e_raw = max(0.0, (l_apoio - dist_qp_e) * 100.0)
-        alt_d_raw = max(0.0, (l_apoio - dist_qp_d) * 100.0)
+        tornoz_e_raw = max(0.0, (l_apoio - dist_qp_e) * 100.0)
+        tornoz_d_raw = max(0.0, (l_apoio - dist_qp_d) * 100.0)
     else:
-        chao_local = min(p_esq[1], p_dir[1] - offset_calib_pernas)
-        alt_e_raw = max(0.0, (p_esq[1] - chao_local) * 100.0)
-        alt_d_raw = max(0.0, ((p_dir[1] - offset_calib_pernas) - chao_local) * 100.0)
+        tornoz_e_raw = clearance_e_raw
+        tornoz_d_raw = clearance_d_raw
 
-    # Zona morta de solo: elimina qualquer flutuação residual de sensor com ambos os pés no chão
-    if alt_e_raw < limiar_ruido_chao:
-        alt_e_raw = 0.0
-    if alt_d_raw < limiar_ruido_chao:
-        alt_d_raw = 0.0
+    # Zona morta de solo calibrada
+    if clearance_e_raw < limiar_ruido_chao: clearance_e_raw = 0.0
+    if clearance_d_raw < limiar_ruido_chao: clearance_d_raw = 0.0
+    if tornoz_e_raw < limiar_ruido_chao: tornoz_e_raw = 0.0
+    if tornoz_d_raw < limiar_ruido_chao: tornoz_d_raw = 0.0
 
-    alt_e_cm = euro_alt_e.filter(tempo, alt_e_raw)
-    alt_d_cm = euro_alt_d.filter(tempo, alt_d_raw)
-    if alt_e_cm < 0.2:
-        alt_e_cm = 0.0
-    if alt_d_cm < 0.2:
-        alt_d_cm = 0.0
+    clearance_e_cm = euro_alt_e.filter(tempo, clearance_e_raw)
+    clearance_d_cm = euro_alt_d.filter(tempo, clearance_d_raw)
+    if clearance_e_cm < 0.2: clearance_e_cm = 0.0
+    if clearance_d_cm < 0.2: clearance_d_cm = 0.0
 
     postura, movimento, _, alt_quad_cm = classificar_estado_usuario(
         p_esq, p_dir, p_quad, r_coxa_e, r_coxa_d, a_e, a_d, var_dist
@@ -525,7 +529,7 @@ def mostrar_feedback():
     str_calib = " [CALIBRADO]" if calibrado else ""
 
     str_estado = f"[{postura} | {movimento}]"
-    str_alt = f"Alt: E={alt_e_cm:4.1f}cm D={alt_d_cm:4.1f}cm"
+    str_alt = f"Solado: E={clearance_e_cm:3.1f}cm D={clearance_d_cm:3.1f}cm (Tornoz: E={tornoz_e_raw:2.0f} D={tornoz_d_raw:2.0f})"
     str_base = f"Base:{larg_lat*100:2.0f}cm"
     str_quad = f" | Quad:{alt_quad_cm:3.0f}cm" if alt_quad_cm is not None else ""
     str_trc = f" | Trc:{p_peito:+4.0f}°" if p_peito is not None else ""
@@ -620,19 +624,25 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
         dist_qp_e = y_quad_filt - y_esq_filt
         dist_qp_d = (y_quad_filt - y_dir_filt) + offset_calib_pernas
         l_apoio = np.maximum(dist_qp_e, dist_qp_d)
-        elev_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
-        elev_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
+        elev_tornoz_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
+        elev_tornoz_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
     else:
-        elev_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
-        elev_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
         alt_quadril = np.full_like(t_comum, 90.0)
         posturas = np.full_like(t_comum, "EM PÉ", dtype=object)
+        elev_tornoz_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
+        elev_tornoz_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
+
+    # 1. Folga Real do Solado ao Chão (True Foot Clearance - sola do tênis)
+    clearance_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
+    clearance_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
 
     # Aplica zona morta de estabilização contra ruído e tremor no solo
-    elev_esq[elev_esq < limiar_ruido_chao] = 0.0
-    elev_dir[elev_dir < limiar_ruido_chao] = 0.0
+    clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
+    clearance_dir[clearance_dir < limiar_ruido_chao] = 0.0
+    elev_tornoz_esq[elev_tornoz_esq < limiar_ruido_chao] = 0.0
+    elev_tornoz_dir[elev_tornoz_dir < limiar_ruido_chao] = 0.0
 
-    return t_comum, d_passo_ap_filt, largura_base_m, elev_esq, elev_dir, alt_quadril, posturas, taxa_amostragem
+    return t_comum, d_passo_ap_filt, largura_base_m, clearance_esq, clearance_dir, elev_tornoz_esq, elev_tornoz_dir, alt_quadril, posturas, taxa_amostragem
 
 
 # ----------------- DETECTOR MULTIMODAL DE PASSOS (SEÇÃO 4) -----------------
@@ -796,8 +806,12 @@ def remover_outliers(valores, limiar=LIMIAR_MAD):
 
 
 # ----------------- RELATÓRIO E VISUALIZAÇÃO UNIFICADA -----------------
-def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas,
-                              tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, projecoes_ap, mascara_validos):
+def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
+                              clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm,
+                              alt_quadril_cm, posturas,
+                              tempos_impactos, dist_impactos, impactos_ms2,
+                              clearances_passos_cm, tornozelos_passos_cm,
+                              pes_passos, projecoes_ap, mascara_validos):
     print("\n\n" + "=" * 90)
     print("      RELATÓRIO CLÍNICO & BIOMECÂNICO: ARQUITETURA DE FUSÃO SOLARXR + SLIMEVR")
     print("=" * 90)
@@ -806,7 +820,8 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
     n_outliers = np.sum(~mascara_validos)
     passos_validos = dist_impactos[mascara_validos]
     tempos_validos = tempos_impactos[mascara_validos]
-    alturas_validas = alturas_passos_cm[mascara_validos]
+    clearances_validos = clearances_passos_cm[mascara_validos]
+    tornozelos_validos = tornozelos_passos_cm[mascara_validos]
     pes_validos = pes_passos[mascara_validos]
 
     duracao = t_passo[-1]
@@ -858,13 +873,16 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
         desvio_passo = np.std(passos_validos)
-        media_alt = np.mean(alturas_validas)
-        desvio_alt = np.std(alturas_validas)
+        media_clear = np.mean(clearances_validos)
+        desvio_clear = np.std(clearances_validos)
+        media_torn = np.mean(tornozelos_validos)
+        desvio_torn = np.std(tornozelos_validos)
         media_base = np.mean(larg_base_m) * 100.0
 
         print(f"  Comprimento médio da passada: {media_passo:.3f} m (± {desvio_passo:.3f} m)")
         print(f"  Largura média da base (X):    {media_base:.1f} cm (Base de suporte lateral)")
-        print(f"  Clearance médio (elevação):   {media_alt:.1f} cm (± {desvio_alt:.1f} cm)")
+        print(f"  Clearance Real do Solado:     {media_clear:.1f} cm (± {desvio_clear:.1f} cm) [Folga solo-sapato: 1.5 - 4.5 cm]")
+        print(f"  Elevação Tornozelo / Flexão:  {media_torn:.1f} cm (± {desvio_torn:.1f} cm) [Encurtamento joelho: 10 - 18 cm]")
 
         mask_esq = np.array(["ESQ" in p for p in pes_validos])
         mask_dir = np.array(["DIR" in p for p in pes_validos])
@@ -872,11 +890,13 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
         n_dir = np.sum(mask_dir)
         d_e = np.mean(passos_validos[mask_esq]) if n_esq > 0 else 0.0
         d_d = np.mean(passos_validos[mask_dir]) if n_dir > 0 else 0.0
-        alt_e = np.mean(alturas_validas[mask_esq]) if n_esq > 0 else 0.0
-        alt_d = np.mean(alturas_validas[mask_dir]) if n_dir > 0 else 0.0
+        cl_e = np.mean(clearances_validos[mask_esq]) if n_esq > 0 else 0.0
+        cl_d = np.mean(clearances_validos[mask_dir]) if n_dir > 0 else 0.0
+        tn_e = np.mean(tornozelos_validos[mask_esq]) if n_esq > 0 else 0.0
+        tn_d = np.mean(tornozelos_validos[mask_dir]) if n_dir > 0 else 0.0
 
-        print(f"  Pé ESQ ({n_esq} passos): {d_e:.3f} m | Altura: {alt_e:.1f} cm")
-        print(f"  Pé DIR ({n_dir} passos): {d_d:.3f} m | Altura: {alt_d:.1f} cm")
+        print(f"  Pé ESQ ({n_esq} passos): {d_e:.3f} m | Solado: {cl_e:.1f} cm | Tornozelo: {tn_e:.1f} cm")
+        print(f"  Pé DIR ({n_dir} passos): {d_d:.3f} m | Solado: {cl_d:.1f} cm | Tornozelo: {tn_d:.1f} cm")
         if d_e > 0 and d_d > 0:
             simetria = (1.0 - abs(d_e - d_d) / ((d_e + d_d) / 2.0)) * 100.0
             print(f"  Índice de Simetria do Passo:  {simetria:.1f}%")
@@ -889,8 +909,8 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
         cv_passo = (desvio_passo / media_passo) * 100.0 if media_passo > 0 else 0.0
         n_microbasia = np.sum(passos_validos < 0.30)
         pct_microbasia = (n_microbasia / len(passos_validos)) * 100.0
-        n_baixo_clearance = np.sum(alturas_validas < 3.5)
-        pct_baixo_clearance = (n_baixo_clearance / len(alturas_validas)) * 100.0
+        n_baixo_clearance = np.sum(clearances_validos < 2.0)
+        pct_baixo_clearance = (n_baixo_clearance / len(clearances_validos)) * 100.0
 
         print(f"\n--- 5. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---")
         if cv_passo > 10.0:
@@ -901,37 +921,37 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
             alerta_cv = "✔ BAIXO (Padrão Regular e Estável)"
         print(f"  Variabilidade do Passo (CV): {cv_passo:5.1f}% [{alerta_cv}]")
         print(f"  Taxa de Microbasia (< 30cm): {n_microbasia}/{len(passos_validos)} ({pct_microbasia:.1f}%)" + (" ⚠ Indicativo de passos curtos" if pct_microbasia > 30 else ""))
-        print(f"  Risco de Arraste (Alt < 3.5cm): {n_baixo_clearance}/{len(alturas_validas)} ({pct_baixo_clearance:.1f}%)" + (" ⚠ Risco de tropeço" if pct_baixo_clearance > 20 else ""))
+        print(f"  Risco de Arraste (Solado < 2.0cm): {n_baixo_clearance}/{len(clearances_validos)} ({pct_baixo_clearance:.1f}%)" + (" ⚠ Risco de tropeço / Shuffling" if pct_baixo_clearance > 25 else " ✔ Clearance adequado"))
     else:
         media_passo = 0.0
 
     # 5. Tabela Integrada
     print("\n--- Tabela Integrada Passo a Passo (Sincronia Heel-Strike SolarXR + Projeção Anteroposterior) ---")
-    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Alt.Real(cm)':<14} {'Tronco':<10} {'Olhar':<14} {'Status'}")
-    print("-" * 100)
-    for i, (t_p, d_p, imp_p, alt_p, pe_p, tr_p, cb_p) in enumerate(zip(
-        tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
+    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Solado(cm)':<12} {'Tornoz(cm)':<12} {'Tronco':<10} {'Olhar':<14} {'Status'}")
+    print("-" * 110)
+    for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p, cb_p) in enumerate(zip(
+        tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
     )):
         valido = mascara_validos[i]
         status = "Válido" if valido else "⚠ Outlier"
         _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
         tr_str = f"{tr_p:+.1f}°" if tem_peito else "N/A"
-        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {imp_p:<15.1f} {d_p:<13.3f} {alt_p:<14.1f} {tr_str:<10} {olhar_lbl:<14} {status}")
-    print("=" * 90)
+        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {imp_p:<15.1f} {d_p:<13.3f} {cl_p:<12.1f} {tn_p:<12.1f} {tr_str:<10} {olhar_lbl:<14} {status}")
+    print("=" * 110)
 
     # 6. Salva CSV Unificado
     with open(NOME_ARQUIVO_PASSOS, mode='w', newline='', encoding="utf-8") as f:
         escritor = csv.writer(f)
         escritor.writerow([
             "Passo", "Tempo_HeelStrike_s", "Pe_Impacto", "Impacto_IMU_ms2", "Comprimento_m",
-            "Altura_Real_cm", "Tronco_graus", "Cabeca_Pitch_graus", "Estado_Olhar", "Outlier"
+            "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Cabeca_Pitch_graus", "Estado_Olhar", "Outlier"
         ])
-        for i, (t_p, d_p, imp_p, alt_p, pe_p, tr_p, cb_p) in enumerate(zip(
-            tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
+        for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p, cb_p) in enumerate(zip(
+            tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
         )):
             _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
             escritor.writerow([
-                i+1, f"{t_p:.3f}", pe_p, f"{imp_p:.2f}", f"{d_p:.3f}", f"{alt_p:.2f}",
+                i+1, f"{t_p:.3f}", pe_p, f"{imp_p:.2f}", f"{d_p:.3f}", f"{cl_p:.2f}", f"{tn_p:.2f}",
                 f"{tr_p:.2f}", f"{cb_p:.2f}", olhar_lbl, "NAO" if mascara_validos[i] else "SIM"
             ])
     print(f"\nResultados consolidados salvos em '{NOME_ARQUIVO_PASSOS}'.")
@@ -989,13 +1009,15 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
         ax_imu.grid(True, alpha=0.3)
         idx_ax += 1
 
-    # Painel 3: Altura Real dos Pés (Referencial Pelvino Imune à Inclinação)
+    # Painel 3: Altura Real dos Pés (Folga do Solado vs Elevação do Tornozelo)
     ax_alt = axes[idx_ax]
-    ax_alt.plot(t_passo, elev_esq_cm, color='dodgerblue', label='Elevação Pé ESQ (cm)')
-    ax_alt.plot(t_passo, elev_dir_cm, color='darkorange', label='Elevação Pé DIR (cm)')
-    ax_alt.axhspan(0, 3.5, color='tomato', alpha=0.10, label='Zona Risco de Tropeço (< 3.5 cm)')
-    ax_alt.set_ylabel('Elevação (cm)')
-    ax_alt.set_title('3. Altura Real dos Pés (Referencial Pelvino — 100% Imune à Inclinação do Tronco)', fontweight="bold")
+    ax_alt.plot(t_passo, clear_esq_cm, color='dodgerblue', label='Folga Solado ESQ (cm) [Clearance Real]', linewidth=1.8)
+    ax_alt.plot(t_passo, clear_dir_cm, color='darkorange', label='Folga Solado DIR (cm) [Clearance Real]', linewidth=1.8)
+    ax_alt.plot(t_passo, torn_esq_cm, color='dodgerblue', linestyle='--', alpha=0.45, label='Elevação Tornozelo ESQ (cm)')
+    ax_alt.plot(t_passo, torn_dir_cm, color='darkorange', linestyle='--', alpha=0.45, label='Elevação Tornozelo DIR (cm)')
+    ax_alt.axhspan(0, 2.0, color='tomato', alpha=0.15, label='Zona Risco de Tropeço (Solado < 2.0 cm)')
+    ax_alt.set_ylabel('Altura (cm)')
+    ax_alt.set_title('3. Folga Real do Solado ao Solo (Linhas Sólidas) vs Elevação Articular do Tornozelo (Tracejadas)', fontweight="bold")
     ax_alt.legend(loc='upper right', fontsize=8)
     ax_alt.grid(True, alpha=0.3)
     idx_ax += 1
@@ -1242,7 +1264,7 @@ def main():
             print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
             return
 
-        t_passo, d_passo_ap, larg_base_m, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
+        t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
             d_esq, d_dir, d_quad
         )
 
@@ -1254,12 +1276,17 @@ def main():
             print("Nenhum passo com a amplitude configurada foi detectado.")
             return
 
-        alturas_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, elev_esq_cm, elev_dir_cm)
+        clearances_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, clear_esq_cm, clear_dir_cm)
+        tornozelos_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, torn_esq_cm, torn_dir_cm)
         mascara_validos = remover_outliers(dist_impactos)
 
         gerar_relatorio_e_graficos(
-            t_passo, d_passo_ap, larg_base_m, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas,
-            tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, projecoes_ap, mascara_validos
+            t_passo, d_passo_ap, larg_base_m,
+            clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm,
+            alt_quadril_cm, posturas,
+            tempos_impactos, dist_impactos, impactos_ms2,
+            clearances_passos_cm, tornozelos_passos_cm,
+            pes_passos, projecoes_ap, mascara_validos
         )
 
 
