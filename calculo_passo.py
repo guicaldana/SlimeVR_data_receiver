@@ -1145,7 +1145,7 @@ def executar_calibracao_inicial():
         for t_id in dados:
             dados[t_id] = {k: [] for k in dados[t_id]}
         for l in dados_imu:
-            dados_imu[l] = {"t": [], "acc": []}
+            dados_imu[l] = {k: [] for k in dados_imu[l]}
         tempo_inicial = time.time()
 
 
