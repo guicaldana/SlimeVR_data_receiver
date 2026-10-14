@@ -1,22 +1,26 @@
-import csv
 import sys
+
+# Garante suporte UTF-8 imediato no terminal Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+print("\n" + "=" * 75, flush=True)
+print("  🚀 INICIANDO SLIMEVR DATA RECEIVER & GAIT ANALYSIS", flush=True)
+print("  📡 Abrindo portas OSC/VMC e conectando SolarXR...", flush=True)
+print("=" * 75 + "\n", flush=True)
+
+import csv
 import os
 import time
 import math
 import subprocess
 import threading
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import butter, filtfilt, find_peaks
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import ThreadingOSCUDPServer
-
-# Garante suporte UTF-8 no terminal Windows
-if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
 
 # ======================== CONFIGURAÇÃO ========================
 # Portas de comunicação do SlimeVR
@@ -530,6 +534,7 @@ def mostrar_feedback():
 
 # ----------------- PROCESSAMENTO DE SINAIS E SÉRIES TEMPORAIS -----------------
 def aplicar_filtro(sinal, frequencia_corte, taxa_amostragem):
+    from scipy.signal import butter, filtfilt
     nyquist = taxa_amostragem / 2.0
     freq_norm = frequencia_corte / nyquist
     if freq_norm >= 1.0 or freq_norm <= 0:
@@ -636,6 +641,7 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
     2. Compensação de atraso de fase de 25 ms do filtro esférico (slerp) do servidor SlimeVR.
     3. Fusão com inversão de derivada e ZUPT para passos suaves e marcha festinante de Parkinson.
     """
+    from scipy.signal import find_peaks
     eventos_impacto = []
 
     # 1. Picos de Aceleração e Jerk (da/dt) das IMUs
@@ -902,6 +908,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, el
     print(f"\nResultados consolidados salvos em '{NOME_ARQUIVO_PASSOS}'.")
 
     # ================= GRÁFICOS INTEGRADOS =================
+    import matplotlib.pyplot as plt
     tem_imu_plot = len(dados_imu["ESQ"]["t"]) > 20 or len(dados_imu["DIR"]["t"]) > 20
     painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + (1 if tem_cabeca else 0) + 1
     total_subplots = 3 + painéis_extras
@@ -1078,7 +1085,7 @@ def main():
             time.sleep(0.005)
     except KeyboardInterrupt:
         rodando = False
-        print("\n\nCaptura concluída! Sincronizando sinais biométricos e impactos...")
+        print("\n\n[*] Captura concluída! Sincronizando sinais biométricos e calculando métricas...", flush=True)
 
         if proc_node:
             try:
