@@ -1074,8 +1074,8 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar.set_xticks(x_indices)
 
     ax_bar_twin = ax_bar.twinx()
-    ax_bar_twin.bar(x_indices + largura/2, alturas_passos_cm, width=largura, color='coral', label='Altura Real (cm)')
-    ax_bar_twin.set_ylabel('Altura Real (cm)', color='coral')
+    ax_bar_twin.bar(x_indices + largura/2, clearances_passos_cm, width=largura, color='coral', label='Clearance Solado (cm)')
+    ax_bar_twin.set_ylabel('Clearance Solado (cm)', color='coral')
     ax_bar.grid(True, alpha=0.3, axis='x')
 
     plt.tight_layout()
