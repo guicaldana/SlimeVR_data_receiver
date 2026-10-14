@@ -36,11 +36,6 @@ OSSO_CABECA = "neck"         # No SlimeVR VMC, a inclinação da cabeça atua no
 INVERTER_PITCH_CABECA = True    # True para tracker na nuca / trás da cabeça
 INVERTER_PITCH_TRONCO = True    # True para inverter frente/trás do peito
 
-# Parâmetros biomecânicos e filtros
-FREQUENCIA_CORTE_POS = 5.0   # Hz para suavização das trajetórias espaciais
-FREQUENCIA_CORTE_ACC = 12.0  # Hz para sinal de aceleração das IMUs
-ORDEM_FILTRO = 2
-
 # ==================== MODO CLÍNICO (PARKINSON) ====================
 # Ajustado para alta sensibilidade: detecta toques suaves (flat-foot / antepé)
 # e passos curtos (microbasia de 10 a 25 cm) típicos de Doença de Parkinson
@@ -48,7 +43,7 @@ MODO_CLINICO_PARKINSON = True
 
 if MODO_CLINICO_PARKINSON:
     LIMIAR_IMPACTO_ACC = 1.8      # m/s² (sensível a contatos suaves sem choque forte de calcanhar)
-    PROEMINENCIA_IMPACTO = 0.6    # m/s² (destaque do pico de impacto)
+    PROEMINENCIA_IMPACTO = 0.5    # m/s² (destaque do pico de impacto)
     DISTANCIA_MINIMA_PASSO = 0.10 # metros mínimos (10 cm - captura passos curtos e microbasia)
     DIST_MIN_MESMO_PE_S = 0.28    # segundos mínimos entre passos do mesmo pé (suporta festinação rápida)
 else:
@@ -57,6 +52,9 @@ else:
     DISTANCIA_MINIMA_PASSO = 0.25 # metros mínimos (25 cm)
     DIST_MIN_MESMO_PE_S = 0.45    # segundos mínimos
 LIMIAR_MAD = 4.5                  # Z-score modificado para detecção de outliers
+
+# Compensação de atraso de fase do filtro SlimeVR OSC vs SolarXR (Seção 4 do relatório)
+TAU_SYNC_OSC = 0.025          # 25 ms de compensação do smoothing/slerp do servidor SlimeVR
 
 # Limiares de classificação postural
 LIMIAR_QUADRIL_EM_PE = 0.65   # metros acima do chão (se > 0.65m = Em Pé, se <= 0.65m = Sentado)
@@ -69,6 +67,9 @@ LIMIAR_CIMA = 15.0
 LIMIAR_BAIXO = -15.0
 LIMIAR_MUITO_BAIXO = -35.0
 
+# Calibração inicial recomendada (Seção 5)
+CALIB_DURACAO_S = 5.0         # 5 segundos de rotina de verificação ortostática neutra
+
 # Arquivos de saída
 os.makedirs("dados", exist_ok=True)
 NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
@@ -76,9 +77,47 @@ NOME_ARQUIVO_BRUTO = os.path.join("dados", "dados_brutos_sessao.csv")
 INTERVALO_FEEDBACK = 0.20     # Atualização do terminal 5 vezes por segundo
 # ==============================================================
 
+# ----------------- FILTRO ONE EURO (SEÇÃO 5) -----------------
+class OneEuroFilter:
+    """
+    One Euro Filter (Casiez et al., CHI 2012)
+    Filtro adaptativo com latência quase nula durante movimentos rápidos
+    e alta atenuação de tremor/ruído de repouso (4 a 6 Hz típico de Parkinson).
+    """
+    def __init__(self, t0=0.0, x0=0.0, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.d_cutoff = float(d_cutoff)
+        self.x_prev = float(x0)
+        self.dx_prev = 0.0
+        self.t_prev = float(t0)
+
+    def filter(self, t, x):
+        dt = t - self.t_prev
+        if dt <= 1e-5:
+            return self.x_prev
+
+        a_d = self._smoothing_factor(dt, self.d_cutoff)
+        dx = (x - self.x_prev) / dt
+        dx_hat = a_d * dx + (1.0 - a_d) * self.dx_prev
+
+        cutoff = self.min_cutoff + self.beta * abs(dx_hat)
+        a = self._smoothing_factor(dt, cutoff)
+        x_hat = a * x + (1.0 - a) * self.x_prev
+
+        self.x_prev = x_hat
+        self.dx_prev = dx_hat
+        self.t_prev = t
+        return x_hat
+
+    def _smoothing_factor(self, dt, cutoff):
+        r = 2.0 * math.pi * cutoff * dt
+        return r / (r + 1.0)
+
+
 # Estruturas de dados em memória
 dados = {
-    TRACKER_QUADRIL: {"t": [], "x": [], "y": [], "z": [], "pitch": []},
+    TRACKER_QUADRIL: {"t": [], "x": [], "y": [], "z": [], "pitch": [], "yaw": []},
     TORNOZELO_ESQ: {"t": [], "x": [], "y": [], "z": []},
     TORNOZELO_DIR: {"t": [], "x": [], "y": [], "z": []},
     TRACKER_COXA_ESQ: {"t": [], "pitch": []},
@@ -105,40 +144,52 @@ pos_atual = {
     TORNOZELO_DIR: None
 }
 rot_atual = {
-    TRACKER_QUADRIL: None,
+    TRACKER_QUADRIL: (0.0, 0.0), # (pitch, yaw)
     TRACKER_COXA_ESQ: None,
     TRACKER_COXA_DIR: None,
     TRACKER_PEITO: None,
     "cabeca": None
 }
 
-# Calibração inicial de chão
+# Calibração inicial de assimetria basal (Delta_cal_esq e Delta_cal_dir - Seção 2)
+delta_cal_esq = 0.0
+delta_cal_dir = 0.0
 chao_base_calibrado = None
-amostras_calib_y = []
-CALIB_DURACAO_S = 1.5
+amostras_calib_e = []
+amostras_calib_d = []
+
+# Instâncias dos Filtros One Euro para suavização em tempo real
+euro_dist = OneEuroFilter(min_cutoff=0.8, beta=0.005)
+euro_alt_e = OneEuroFilter(min_cutoff=1.0, beta=0.007)
+euro_alt_d = OneEuroFilter(min_cutoff=1.0, beta=0.007)
 
 ossos_vmc_detectados = set()
 ultimo_impacto_str = "Aguardando..."
 
 
 # ----------------- CONVERSÕES CINEMÁTICAS -----------------
-def extrair_pitch_rotacao(rotacao, inverter=False):
-    """Calcula o ângulo de pitch (inclinação frente/trás) em graus."""
+def extrair_pitch_e_yaw(rotacao, inverter_pitch=False):
+    """Extrai os ângulos de pitch e yaw em graus a partir de Euler ou Quaternion."""
     if len(rotacao) == 4:
         x, y, z, w = rotacao
         sinp = 2.0 * (w * x - y * z)
         sinp = max(-1.0, min(1.0, sinp))
         pitch = math.degrees(math.asin(sinp))
-    elif len(rotacao) == 3:
-        pitch = float(rotacao[0])
-        if pitch > 180:
-            pitch -= 360
-    else:
-        pitch = 0.0
 
-    if inverter:
+        siny_cosp = 2.0 * (w * y - z * x)
+        cosy_cosp = 1.0 - 2.0 * (x * x + y * y)
+        yaw = math.degrees(math.atan2(siny_cosp, cosy_cosp))
+    elif len(rotacao) >= 3:
+        pitch = float(rotacao[0])
+        if pitch > 180: pitch -= 360
+        yaw = float(rotacao[1])
+        if yaw > 180: yaw -= 360
+    else:
+        pitch, yaw = 0.0, 0.0
+
+    if inverter_pitch:
         pitch = -pitch
-    return pitch
+    return pitch, yaw
 
 
 def converter_quaternion_cabeca(x, y, z, w):
@@ -183,7 +234,7 @@ def classificar_postura_tronco(angulo):
 # ----------------- RECEPÇÃO DE DADOS (OSC, VMC & SOLARXR) -----------------
 def osc_handler_9000(address, *args):
     """Recebe trackers na porta 9000 (Tornozelos, Quadril, Coxas, Peito)."""
-    global tempo_inicial, chao_base_calibrado
+    global tempo_inicial, delta_cal_esq, delta_cal_dir, chao_base_calibrado
 
     if not address.startswith("/tracking/trackers/"):
         return
@@ -210,24 +261,31 @@ def osc_handler_9000(address, *args):
                 dados[tracker_id]["z"].append(z)
                 pos_atual[tracker_id] = (x, y, z)
 
-                # Calibração inicial do chão (primeiros 1.5s com pés no chão)
-                if t_rel <= CALIB_DURACAO_S and tracker_id in (TORNOZELO_ESQ, TORNOZELO_DIR):
-                    amostras_calib_y.append(y)
-                    if len(amostras_calib_y) >= 15:
-                        chao_base_calibrado = float(np.percentile(amostras_calib_y, 10))
+                # Calibração inicial de assimetria basal nos primeiros 5s (Seção 2, Eq 1.1)
+                if t_rel <= CALIB_DURACAO_S:
+                    if tracker_id == TORNOZELO_ESQ: amostras_calib_e.append(y)
+                    if tracker_id == TORNOZELO_DIR: amostras_calib_d.append(y)
+                    if len(amostras_calib_e) >= 20 and len(amostras_calib_d) >= 20:
+                        med_e = float(np.mean(amostras_calib_e))
+                        med_d = float(np.mean(amostras_calib_d))
+                        piso_min = min(med_e, med_d)
+                        delta_cal_esq = med_e - piso_min
+                        delta_cal_dir = med_d - piso_min
+                        chao_base_calibrado = piso_min
 
         elif tipo == "rotation" and len(args) >= 3:
             if tracker_id == TRACKER_PEITO:
-                pitch = extrair_pitch_rotacao(args, inverter=INVERTER_PITCH_TRONCO)
+                pitch, _ = extrair_pitch_e_yaw(args, inverter_pitch=INVERTER_PITCH_TRONCO)
                 dados[TRACKER_PEITO]["t"].append(t_rel)
                 dados[TRACKER_PEITO]["pitch"].append(pitch)
                 rot_atual[TRACKER_PEITO] = pitch
             elif tracker_id == TRACKER_QUADRIL:
-                pitch = extrair_pitch_rotacao(args)
+                pitch, yaw = extrair_pitch_e_yaw(args)
                 dados[TRACKER_QUADRIL]["pitch"].append(pitch)
-                rot_atual[TRACKER_QUADRIL] = pitch
+                dados[TRACKER_QUADRIL]["yaw"].append(yaw)
+                rot_atual[TRACKER_QUADRIL] = (pitch, yaw)
             elif tracker_id in (TRACKER_COXA_ESQ, TRACKER_COXA_DIR):
-                pitch = extrair_pitch_rotacao(args)
+                pitch, _ = extrair_pitch_e_yaw(args)
                 dados[tracker_id]["t"].append(t_rel)
                 dados[tracker_id]["pitch"].append(pitch)
                 rot_atual[tracker_id] = pitch
@@ -269,7 +327,7 @@ def vmc_handler_39539(address, *args):
 
 
 def thread_leitor_solarxr(proc):
-    """Lê aceleração linear direta das IMUs dos pés via SolarXR."""
+    """Lê aceleração linear direta das IMUs dos pés via SolarXR (com pitch do cadarço)."""
     global tempo_inicial, ultimo_impacto_str
     for linha in proc.stdout:
         if not rodando:
@@ -290,6 +348,7 @@ def thread_leitor_solarxr(proc):
             ax = float(partes[2])
             ay = float(partes[3])
             az = float(partes[4])
+            pitch_cadarco = float(partes[5])
         except ValueError:
             continue
 
@@ -307,19 +366,54 @@ def thread_leitor_solarxr(proc):
             dados_imu[lado]["acc"].append(acc_mag)
 
             if acc_mag >= LIMIAR_IMPACTO_ACC:
-                ultimo_impacto_str = f"Pé {lado}: {acc_mag:.1f} m/s²"
+                ultimo_impacto_str = f"Pé {lado}: {acc_mag:.1f} m/s² (Pitch:{pitch_cadarco:+3.0f}°)"
+
+
+# ----------------- PROJEÇÃO VETORIAL ANTEROPOSTERIOR (SEÇÃO 3) -----------------
+def calcular_projecao_anteroposterior(p_esq, p_dir, rot_quadril, pos_quadril=None):
+    """
+    Projeção Vetorial da Distância entre os Pés (Eq. da Seção 3 da Nota Técnica):
+    D_passo(t) = (P_esq(t) - P_dir(t)) · F_quadril_XZ(t)
+    
+    Elimina a contaminação da largura lateral dos pés (comum no Parkinson).
+    A curva cruza exatamente o zero durante o cruzamento das pernas (mid-stance).
+    Positivo = Pé Esquerdo à frente | Negativo = Pé Direito à frente.
+    """
+    dx = p_esq[0] - p_dir[0]
+    dz = p_esq[2] - p_dir[2]
+
+    # Vetor unitário frontal horizontal do quadril F_quadril_XZ
+    yaw_deg = rot_quadril[1] if rot_quadril else 0.0
+    psi = math.radians(yaw_deg)
+    fx = -math.sin(psi)
+    fz = -math.cos(psi)
+
+    # Normaliza
+    fn = math.sqrt(fx**2 + fz**2)
+    if fn > 0:
+        fx /= fn
+        fz /= fn
+    else:
+        fx, fz = 0.0, -1.0
+
+    # Projeção escalar sobre o vetor de avanço
+    d_ap = dx * fx + dz * fz
+
+    # Largura da base de suporte lateral desacoplada
+    largura_lateral = abs(dx * fz - dz * fx)
+
+    return d_ap, largura_lateral
 
 
 # ----------------- CLASSIFICAÇÃO POSTURAL E DE MOVIMENTO -----------------
 def classificar_estado_usuario(p_esq, p_dir, p_quad, rot_coxa_e, rot_coxa_d, a_esq, a_dir, var_dist):
     """
-    Classifica de forma unificada:
-    1. Postura: EM PÉ vs SENTADO
-    2. Movimento: PARADO vs CAMINHANDO / ATIVO
-    3. Cota do chão dinâmico (imune à inclinação do tronco)
+    Classifica Postura e Movimento com Nível Dinâmico do Solo e Referencial Pelvino.
     """
-    # 1. Piso Dinâmico de Apoio: em marcha ou apoio unipedal, o chão é o pé mais baixo
-    chao_instantaneo = min(p_esq[1], p_dir[1])
+    # Nível Dinâmico do Solo corrigido com calibração basal (Eq. 1.1 e 1.2 da Nota Técnica)
+    y_e_corr = p_esq[1] - delta_cal_esq
+    y_d_corr = p_dir[1] - delta_cal_dir
+    chao_instantaneo = min(y_e_corr, y_d_corr)
 
     # 1. Postura (EM PÉ vs SENTADO)
     if p_quad is not None:
@@ -333,7 +427,7 @@ def classificar_estado_usuario(p_esq, p_dir, p_quad, rot_coxa_e, rot_coxa_d, a_e
             postura = "EM PÉ"
         else:
             postura = "SENTADO"
-        altura_quad_cm = dist_quadril_chao * 100
+        altura_quad_cm = dist_quadril_chao * 100.0
     else:
         postura = "EM PÉ"
         altura_quad_cm = None
@@ -348,7 +442,7 @@ def classificar_estado_usuario(p_esq, p_dir, p_quad, rot_coxa_e, rot_coxa_d, a_e
     return postura, movimento, chao_instantaneo, altura_quad_cm
 
 
-# ----------------- FEEDBACK EM TEMPO REAL -----------------
+# ----------------- FEEDBACK EM TEMPO REAL COM ONE EURO FILTER -----------------
 def mostrar_feedback():
     global ultimo_feedback
     agora = time.time()
@@ -361,25 +455,22 @@ def mostrar_feedback():
         p_esq = pos_atual[TORNOZELO_ESQ]
         p_dir = pos_atual[TORNOZELO_DIR]
         p_quad = pos_atual[TRACKER_QUADRIL]
+        r_quad = rot_atual[TRACKER_QUADRIL]
         r_coxa_e = rot_atual[TRACKER_COXA_ESQ]
         r_coxa_d = rot_atual[TRACKER_COXA_DIR]
         p_peito = rot_atual[TRACKER_PEITO]
-        p_cabeca = rot_atual["cabeca"]
         t_init = tempo_inicial
         ult_imp = ultimo_impacto_str
 
-        # Aceleração recente das IMUs (últimas 3 amostras)
         a_e = dados_imu["ESQ"]["acc"][-1] if len(dados_imu["ESQ"]["acc"]) > 0 else 0.0
         a_d = dados_imu["DIR"]["acc"][-1] if len(dados_imu["DIR"]["acc"]) > 0 else 0.0
 
-        # Variabilidade recente da distância
         n_pts = min(len(dados[TORNOZELO_ESQ]["x"]), len(dados[TORNOZELO_DIR]["x"]))
         var_dist = 0.0
         if n_pts >= 8:
             dx = np.array(dados[TORNOZELO_DIR]["x"][-8:]) - np.array(dados[TORNOZELO_ESQ]["x"][-8:])
             dz = np.array(dados[TORNOZELO_DIR]["z"][-8:]) - np.array(dados[TORNOZELO_ESQ]["z"][-8:])
-            d_recentes = np.sqrt(dx**2 + dz**2)
-            var_dist = float(np.std(d_recentes))
+            var_dist = float(np.std(np.sqrt(dx**2 + dz**2)))
 
     if p_esq is None or p_dir is None:
         esperando = []
@@ -389,60 +480,68 @@ def mostrar_feedback():
         return
 
     tempo = agora - t_init if t_init else 0
-    dist_horizontal = math.sqrt((p_dir[0] - p_esq[0])**2 + (p_dir[2] - p_esq[2])**2)
 
-    postura, movimento, chao_inst, alt_quad_cm = classificar_estado_usuario(
+    # 1. Projeção Vetorial Anteroposterior (Seção 3)
+    d_ap, larg_lat = calcular_projecao_anteroposterior(p_esq, p_dir, r_quad, p_quad)
+    d_ap_filtrada = euro_dist.filter(tempo, d_ap)
+
+    # 2. Altura Pélvica Imune à Inclinação (Eq. 1.3 da Nota Técnica)
+    if p_quad is not None:
+        dist_qp_e = p_quad[1] - (p_esq[1] - delta_cal_esq)
+        dist_qp_d = p_quad[1] - (p_dir[1] - delta_cal_dir)
+        l_apoio = max(dist_qp_e, dist_qp_d)
+        alt_e_raw = max(0.0, (l_apoio - dist_qp_e) * 100.0)
+        alt_d_raw = max(0.0, (l_apoio - dist_qp_d) * 100.0)
+    else:
+        chao_local = min(p_esq[1], p_dir[1])
+        alt_e_raw = max(0.0, (p_esq[1] - chao_local) * 100.0)
+        alt_d_raw = max(0.0, (p_dir[1] - chao_local) * 100.0)
+
+    alt_e_cm = euro_alt_e.filter(tempo, alt_e_raw)
+    alt_d_cm = euro_alt_d.filter(tempo, alt_d_raw)
+
+    postura, movimento, _, alt_quad_cm = classificar_estado_usuario(
         p_esq, p_dir, p_quad, r_coxa_e, r_coxa_d, a_e, a_d, var_dist
     )
 
-    # 1. Altura Imune à Inclinação: Referência Pélvica (Quadril -> Pé)
-    # Como o membro inferior (fêmur + tíbia) tem comprimento rígido,
-    # inclinações do tronco deslocam Quadril e Pés juntos, cancelando 100% o artefato.
-    if p_quad is not None:
-        dist_qp_esq = p_quad[1] - p_esq[1]
-        dist_qp_dir = p_quad[1] - p_dir[1]
-        # O pé apoiado é o que mantém a perna em extensão (maior distância ao quadril)
-        l_apoio = max(dist_qp_esq, dist_qp_dir)
-        alt_e_cm = max(0.0, (l_apoio - dist_qp_esq) * 100.0)
-        alt_d_cm = max(0.0, (l_apoio - dist_qp_dir) * 100.0)
+    # Identifica perna na frente via projeção vetorial
+    if abs(d_ap_filtrada) < 0.05:
+        str_passo = f"Cruzt: {d_ap_filtrada:+.2f}m"
+    elif d_ap_filtrada > 0:
+        str_passo = f"EsqAnt: {d_ap_filtrada:+.2f}m"
     else:
-        # Fallback se tracker de quadril não estiver presente
-        alt_e_cm = max(0.0, (p_esq[1] - chao_inst) * 100.0)
-        alt_d_cm = max(0.0, (p_dir[1] - chao_inst) * 100.0)
+        str_passo = f"DirAnt: {-d_ap_filtrada:+.2f}m"
 
-    # Papel instantâneo de cada pé
-    if alt_e_cm < 1.8 and alt_d_cm < 1.8:
-        papel_e, papel_d = "Apoio", "Apoio"
-    elif alt_e_cm <= alt_d_cm:
-        papel_e, papel_d = "Apoio", "Balanço"
+    # Período de Calibração / Validação Inicial de 5s (Seção 5)
+    if tempo <= CALIB_DURACAO_S:
+        str_calib = f" [CALIBRAÇÃO {CALIB_DURACAO_S - tempo:3.1f}s - Fique neutro/3 elevações]"
     else:
-        papel_e, papel_d = "Balanço", "Apoio"
+        str_calib = ""
 
-    # Badges visuais
     str_estado = f"[{postura} | {movimento}]"
-    str_pes = f"Pés: {dist_horizontal:.3f}m"
-    str_alt = f"Alt: E={alt_e_cm:4.1f}cm({papel_e[0]}) D={alt_d_cm:4.1f}cm({papel_d[0]})"
+    str_alt = f"Alt: E={alt_e_cm:4.1f}cm D={alt_d_cm:4.1f}cm"
+    str_base = f"Base:{larg_lat*100:2.0f}cm"
     str_quad = f" | Quad:{alt_quad_cm:3.0f}cm" if alt_quad_cm is not None else ""
     str_trc = f" | Trc:{p_peito:+4.0f}°" if p_peito is not None else ""
     str_imu = f" | IMU:{ult_imp}" if (a_e > 0 or a_d > 0) else ""
 
-    print(f"\r  ⏱ {tempo:4.1f}s | {str_estado:<21} | {str_pes} | {str_alt}{str_quad}{str_trc}{str_imu}  ", end="", flush=True)
+    print(f"\r  ⏱ {tempo:4.1f}s | {str_estado:<21} | {str_passo} ({str_base}) | {str_alt}{str_quad}{str_trc}{str_imu}{str_calib}  ", end="", flush=True)
 
 
-# ----------------- PROCESSAMENTO DE SINAIS E HEEL-STRIKE -----------------
+# ----------------- PROCESSAMENTO DE SINAIS E SÉRIES TEMPORAIS -----------------
 def aplicar_filtro(sinal, frequencia_corte, taxa_amostragem):
     nyquist = taxa_amostragem / 2.0
     freq_norm = frequencia_corte / nyquist
     if freq_norm >= 1.0 or freq_norm <= 0:
         return sinal
-    b, a = butter(ORDEM_FILTRO, freq_norm, btype='low')
+    b, a = butter(2, freq_norm, btype='low')
     return filtfilt(b, a, sinal)
 
 
 def calcular_sinais_completos(d_esq, d_dir, d_quad):
     """
-    Sincroniza os sinais a 100 Hz e extrai as alturas reais imunes à inclinação
-    e as séries temporais de postura e movimento.
+    Gera as séries temporais determinísticas com Projeção Vetorial Anteroposterior (Seção 3),
+    Referencial Pelvino Imune à Inclinação (Eq. 1.3) e Largura da Base de Suporte.
     """
     t_esq = np.array(d_esq["t"])
     x_esq, y_esq, z_esq = np.array(d_esq["x"]), np.array(d_esq["y"]), np.array(d_esq["z"])
@@ -452,60 +551,94 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
 
     t_inicio = max(t_esq[0], t_dir[0])
     t_fim = min(t_esq[-1], t_dir[-1])
-    dt = 0.01  # Base uniforme a 100 Hz
+    dt = 0.01  # Base uniforme determinística a 100 Hz (Seção 5)
     taxa_amostragem = 100.0
 
     t_comum = np.arange(t_inicio, t_fim, dt)
     x_esq_i, z_esq_i = np.interp(t_comum, t_esq, x_esq), np.interp(t_comum, t_esq, z_esq)
     x_dir_i, z_dir_i = np.interp(t_comum, t_dir, x_dir), np.interp(t_comum, t_dir, z_dir)
 
-    dist = np.sqrt((x_dir_i - x_esq_i)**2 + (z_dir_i - z_esq_i)**2)
+    y_esq_filt = aplicar_filtro(np.interp(t_comum, t_esq, y_esq), 5.0, taxa_amostragem)
+    y_dir_filt = aplicar_filtro(np.interp(t_comum, t_dir, y_dir), 5.0, taxa_amostragem)
 
-    y_esq_filt = aplicar_filtro(np.interp(t_comum, t_esq, y_esq), FREQUENCIA_CORTE_POS, taxa_amostragem)
-    y_dir_filt = aplicar_filtro(np.interp(t_comum, t_dir, y_dir), FREQUENCIA_CORTE_POS, taxa_amostragem)
-
-    # 1. Calibração inicial de compensação de montagem entre os pés (primeiros 1.5s)
+    # Calibração de assimetria basal nos primeiros segundos
     mask_calib = t_comum <= min(t_comum[0] + CALIB_DURACAO_S, t_comum[-1])
-    delta_pes = (np.mean(y_esq_filt[mask_calib]) - np.mean(y_dir_filt[mask_calib])) if np.any(mask_calib) else 0.0
-    y_esq_corr = y_esq_filt - delta_pes
+    d_e_basal = np.mean(y_esq_filt[mask_calib]) if np.any(mask_calib) else y_esq_filt[0]
+    d_d_basal = np.mean(y_dir_filt[mask_calib]) if np.any(mask_calib) else y_dir_filt[0]
+    piso_min = min(d_e_basal, d_d_basal)
+    y_esq_corr = y_esq_filt - (d_e_basal - piso_min)
+    y_dir_corr = y_dir_filt - (d_d_basal - piso_min)
 
-    # 2. Piso Dinâmico de Apoio: o chão físico verdadeiro é o pé de apoio mais baixo
-    chao_dinamico = np.minimum(y_esq_corr, y_dir_filt)
+    # 1. Projeção Vetorial Anteroposterior com o Vetor de Direção do Quadril (Seção 3)
+    dx = x_esq_i - x_dir_i
+    dz = z_esq_i - z_dir_i
 
-    # 3. Trajetória do Quadril e Altura Imune à Inclinação (Referência Pélvica)
     tem_quad = len(d_quad["t"]) > 10
+    if tem_quad and "yaw" in d_quad and len(d_quad["yaw"]) > 10:
+        t_q = np.array(d_quad["t"])
+        yaw_q = np.array(d_quad["yaw"])
+        yaw_i = np.interp(t_comum, t_q, yaw_q)
+        rad_yaw = np.radians(yaw_i)
+        fx = -np.sin(rad_yaw)
+        fz = -np.cos(rad_yaw)
+    else:
+        # Fallback cinemático pelo vetor de deslocamento do centro dos pés
+        cx = (x_esq_i + x_dir_i) / 2.0
+        cz = (z_esq_i + z_dir_i) / 2.0
+        vx = np.gradient(cx, dt)
+        vz = np.gradient(cz, dt)
+        v_mag = np.sqrt(vx**2 + vz**2)
+        v_mag[v_mag < 0.05] = 1.0
+        fx = vx / v_mag
+        fz = vz / v_mag
+
+    f_norm = np.sqrt(fx**2 + fz**2)
+    f_norm[f_norm == 0] = 1.0
+    fx /= f_norm
+    fz /= f_norm
+
+    # D_passo(t) projeta exclusivamente no eixo anteroposterior
+    d_passo_ap = dx * fx + dz * fz
+    d_passo_ap_filt = aplicar_filtro(d_passo_ap, 4.0, taxa_amostragem)
+
+    # Largura da base de suporte lateral (Step Width)
+    largura_base_m = np.abs(dx * fz - dz * fx)
+
+    # 2. Piso Dinâmico de Apoio e Referencial Pelvino (Eq. 1.2 e 1.3)
+    chao_dinamico = np.minimum(y_esq_corr, y_dir_corr)
+
     if tem_quad:
         t_quad = np.array(d_quad["t"])
         y_quad = np.array(d_quad["y"])
-        y_quad_filt = aplicar_filtro(np.interp(t_comum, t_quad, y_quad), FREQUENCIA_CORTE_POS, taxa_amostragem)
+        y_quad_filt = aplicar_filtro(np.interp(t_comum, t_quad, y_quad), 5.0, taxa_amostragem)
         alt_quadril = (y_quad_filt - chao_dinamico) * 100.0
         posturas = np.where(alt_quadril >= (LIMIAR_QUADRIL_EM_PE * 100), "EM PÉ", "SENTADO")
 
-        # Distância Quadril -> Pé cancela 100% de qualquer inclinação de tronco/cabeça
         dist_qp_e = y_quad_filt - y_esq_corr
-        dist_qp_d = y_quad_filt - y_dir_filt
+        dist_qp_d = y_quad_filt - y_dir_corr
         l_apoio = np.maximum(dist_qp_e, dist_qp_d)
         elev_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
         elev_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
     else:
         elev_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
-        elev_dir = np.maximum(0.0, y_dir_filt - chao_dinamico) * 100.0
+        elev_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
         alt_quadril = np.full_like(t_comum, 90.0)
         posturas = np.full_like(t_comum, "EM PÉ", dtype=object)
 
-    return t_comum, dist, elev_esq, elev_dir, alt_quadril, posturas, taxa_amostragem
+    return t_comum, d_passo_ap_filt, largura_base_m, elev_esq, elev_dir, alt_quadril, posturas, taxa_amostragem
 
 
-def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
+# ----------------- DETECTOR MULTIMODAL DE PASSOS (SEÇÃO 4) -----------------
+def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
     """
-    Detecta o timing exato de cada Heel-Strike / Initial Contact de forma híbrida:
-    1. Impacto inercial SolarXR (alta precisão para contatos mecânicos)
-    2. Suporte a toques suaves e passos curtos de Parkinson (microbasia >= 10 cm)
-    3. Fusão com expansão cinemática se o contato for de pé plano (flat-foot) sem choque brusco
+    Detector Multimodal com Compensação de Fase OSC vs SolarXR (Seção 4 da Nota Técnica):
+    1. Spikes de aceleração e Jerk nas IMUs dos cadarços (100 Hz).
+    2. Compensação de atraso de fase de 25 ms do filtro esférico (slerp) do servidor SlimeVR.
+    3. Fusão com inversão de derivada e ZUPT para passos suaves e marcha festinante de Parkinson.
     """
     eventos_impacto = []
 
-    # 1. Detecção inercial das IMUs
+    # 1. Picos de Aceleração e Jerk (da/dt) das IMUs
     for lado in ("ESQ", "DIR"):
         t_imu = np.array(dados_imu[lado]["t"])
         acc_imu = np.array(dados_imu[lado]["acc"])
@@ -514,11 +647,14 @@ def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
             continue
 
         acc_interp = np.interp(t_comum, t_imu, acc_imu)
-        acc_filtrada = aplicar_filtro(acc_interp, FREQUENCIA_CORTE_ACC, taxa_amostragem)
+        acc_filtrada = aplicar_filtro(acc_interp, 12.0, taxa_amostragem)
+
+        # Cálculo do Jerk (derivada temporal da aceleração)
+        jerk = np.gradient(acc_filtrada, 1.0 / taxa_amostragem)
 
         dist_min_pts = int(taxa_amostragem * DIST_MIN_MESMO_PE_S)
 
-        picos, props = find_peaks(
+        picos, _ = find_peaks(
             acc_filtrada,
             height=LIMIAR_IMPACTO_ACC,
             distance=dist_min_pts,
@@ -526,50 +662,58 @@ def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
         )
 
         for p_idx in picos:
-            t_impacto = t_comum[p_idx]
+            t_impacto_imu = t_comum[p_idx]
             mag_impacto = acc_filtrada[p_idx]
-            dist_no_impacto = dist_sinal[p_idx]
 
-            if dist_no_impacto >= DISTANCIA_MINIMA_PASSO:
+            # Aplica compensação de atraso de fase do filtro OSC (Seção 4: tau_sync = 25 ms)
+            t_osc_alinhado = min(t_impacto_imu + TAU_SYNC_OSC, t_comum[-1])
+            idx_osc = int(round((t_osc_alinhado - t_comum[0]) * taxa_amostragem))
+            idx_osc = max(0, min(len(t_comum) - 1, idx_osc))
+
+            val_passo = d_passo_ap[idx_osc]
+            comp_passo = abs(val_passo)
+
+            if comp_passo >= DISTANCIA_MINIMA_PASSO:
                 eventos_impacto.append({
-                    "tempo": t_impacto,
+                    "tempo": t_impacto_imu,
+                    "tempo_osc": t_osc_alinhado,
                     "pe": lado,
                     "impacto_ms2": mag_impacto,
-                    "idx": p_idx,
-                    "comprimento_m": dist_no_impacto
+                    "idx": idx_osc,
+                    "comprimento_m": comp_passo,
+                    "projecao_ap": val_passo
                 })
 
-    # 2. Picos cinemáticos de abertura (máxima extensão / ZUPT)
+    # 2. Resgate Multimodal por Inversão Cinemática (ZUPT / Extensão Máxima)
+    # Detecta cristas positivas (Pé Esquerdo à frente) e vales negativos (Pé Direito à frente)
     intervalo_min = int(taxa_amostragem * 0.25)
-    dist_filt = aplicar_filtro(dist_sinal, FREQUENCIA_CORTE_POS, taxa_amostragem)
-    picos_geom, _ = find_peaks(
-        dist_filt,
-        height=DISTANCIA_MINIMA_PASSO,
-        distance=intervalo_min,
-        prominence=0.035
-    )
+    picos_pos, _ = find_peaks(d_passo_ap, height=DISTANCIA_MINIMA_PASSO, distance=intervalo_min, prominence=0.04)
+    vales_neg, _ = find_peaks(-d_passo_ap, height=DISTANCIA_MINIMA_PASSO, distance=intervalo_min, prominence=0.04)
 
-    # 3. Fusão Híbrida: resgata passos suaves (flat-foot / arrastados) que não atingiram o limiar inercial
-    for g_idx in picos_geom:
+    for g_idx in list(picos_pos) + list(vales_neg):
         t_g = t_comum[g_idx]
-        d_g = dist_filt[g_idx]
+        val_g = d_passo_ap[g_idx]
+        comp_g = abs(val_g)
+        pe_estimado = "ESQ" if val_g > 0 else "DIR"
 
         tem_impacto_proximo = any(abs(ev["tempo"] - t_g) <= 0.16 for ev in eventos_impacto)
         if not tem_impacto_proximo:
             eventos_impacto.append({
                 "tempo": t_g,
-                "pe": "SUAVE",
+                "tempo_osc": t_g,
+                "pe": f"{pe_estimado}*",  # * indica detectado por fusão cinemática suave
                 "impacto_ms2": 0.0,
                 "idx": g_idx,
-                "comprimento_m": d_g
+                "comprimento_m": comp_g,
+                "projecao_ap": val_g
             })
 
     if len(eventos_impacto) == 0:
-        return np.array([]), np.array([]), np.array([]), np.array([])
+        return np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
 
     eventos_impacto.sort(key=lambda ev: ev["tempo"])
 
-    # Remove duplicados excessivamente próximos (< 0.15s)
+    # Filtro refratário (< 0.15s)
     eventos_filtrados = []
     for ev in eventos_impacto:
         if not eventos_filtrados or (ev["tempo"] - eventos_filtrados[-1]["tempo"]) >= 0.15:
@@ -579,8 +723,9 @@ def detectar_passos_por_impacto_imu(t_comum, dist_sinal, taxa_amostragem):
     comprimentos = np.array([ev["comprimento_m"] for ev in eventos_filtrados])
     impactos = np.array([ev["impacto_ms2"] for ev in eventos_filtrados])
     pes = np.array([ev["pe"] for ev in eventos_filtrados])
+    projecoes = np.array([ev["projecao_ap"] for ev in eventos_filtrados])
 
-    return tempos, comprimentos, impactos, pes
+    return tempos, comprimentos, impactos, pes, projecoes
 
 
 def calcular_alturas_passos(t, tempos_impactos, pes_impactos, elevacao_esq_cm, elevacao_dir_cm):
@@ -590,9 +735,9 @@ def calcular_alturas_passos(t, tempos_impactos, pes_impactos, elevacao_esq_cm, e
         t_inicio = tempos_impactos[i - 1] if i > 0 else max(t[0], t_imp - 0.7)
         mask = (t >= t_inicio) & (t <= t_imp)
         if np.any(mask):
-            if pe == "DIR":
+            if "DIR" in pe:
                 alturas.append(np.max(elevacao_dir_cm[mask]))
-            elif pe == "ESQ":
+            elif "ESQ" in pe:
                 alturas.append(np.max(elevacao_esq_cm[mask]))
             else:
                 alturas.append(max(np.max(elevacao_esq_cm[mask]), np.max(elevacao_dir_cm[mask])))
@@ -616,11 +761,11 @@ def remover_outliers(valores, limiar=LIMIAR_MAD):
 
 
 # ----------------- RELATÓRIO E VISUALIZAÇÃO UNIFICADA -----------------
-def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas,
-                              tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, mascara_validos):
-    print("\n\n" + "=" * 85)
-    print("      RELATÓRIO UNIFICADO: MARCHA E POSTURA COM ALTURA REAL DOS PÉS")
-    print("=" * 85)
+def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas,
+                              tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, projecoes_ap, mascara_validos):
+    print("\n\n" + "=" * 90)
+    print("      RELATÓRIO CLÍNICO & BIOMECÂNICO: ARQUITETURA DE FUSÃO SOLARXR + SLIMEVR")
+    print("=" * 90)
 
     n_total = len(dist_impactos)
     n_outliers = np.sum(~mascara_validos)
@@ -630,21 +775,21 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
     pes_validos = pes_passos[mascara_validos]
 
     duracao = t_passo[-1]
-    print(f"Duração total da sessão: {duracao:.1f} s")
-    print(f"Passos detectados:       {n_total} (Válidos: {len(passos_validos)} | Outliers: {n_outliers} via MAD)")
+    print(f"Duração da sessão:       {duracao:.1f} s")
+    print(f"Passos detectados:       {n_total} (Válidos: {len(passos_validos)} | Outliers MAD: {n_outliers})")
 
-    # 1. Estatística Postural (Sentado vs Em Pé)
+    # 1. Estatística Postural
     dt_amostra = np.mean(np.diff(t_passo)) if len(t_passo) > 1 else 0.01
     tempo_em_pe = np.sum(posturas == "EM PÉ") * dt_amostra
     tempo_sentado = np.sum(posturas == "SENTADO") * dt_amostra
     pct_em_pe = (tempo_em_pe / duracao) * 100 if duracao > 0 else 0
     pct_sentado = (tempo_sentado / duracao) * 100 if duracao > 0 else 0
 
-    print(f"\n--- Classificação Postural (Baseada no Quadril e Coxas) ---")
+    print(f"\n--- 1. Classificação Postural (Referencial Pelvino - Eq. 1.3) ---")
     print(f"  Tempo Em Pé:   {tempo_em_pe:5.1f} s ({pct_em_pe:5.1f}%)")
     print(f"  Tempo Sentado: {tempo_sentado:5.1f} s ({pct_sentado:5.1f}%)")
     if np.any(alt_quadril_cm > 0):
-        print(f"  Altura média do Quadril ao Solo: {np.mean(alt_quadril_cm):.1f} cm (± {np.std(alt_quadril_cm):.1f} cm)")
+        print(f"  Altura Média Quadril-Solo: {np.mean(alt_quadril_cm):.1f} cm (± {np.std(alt_quadril_cm):.1f} cm)")
 
     # 2. Tronco e Cabeça
     tem_peito = len(dados[TRACKER_PEITO]["t"]) >= 10
@@ -654,7 +799,7 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
         pitch_peito = np.array(dados[TRACKER_PEITO]["pitch"])
         tronco_nos_passos = np.interp(tempos_impactos, t_peito, pitch_peito)
         med_tronco = np.mean(pitch_peito)
-        print(f"\n--- Postura do Tronco (Peito - Tracker {TRACKER_PEITO}) ---")
+        print(f"\n--- 2. Postura do Tronco (Peito - Tracker {TRACKER_PEITO}) ---")
         print(f"  Inclinação média: {med_tronco:+.2f}° ({classificar_postura_tronco(med_tronco)})")
     else:
         tronco_nos_passos = [0.0] * n_total
@@ -668,24 +813,26 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
         dt_c = np.mean(np.diff(t_cabeca)) if len(t_cabeca) > 1 else 0.02
         t_neutro = np.sum((pitch_cabeca >= LIMIAR_BAIXO) & (pitch_cabeca <= LIMIAR_CIMA)) * dt_c
         pct_neutro = (t_neutro / duracao) * 100 if duracao > 0 else 0
-        print(f"\n--- Atenção Visual e Cabeça (VMC) ---")
+        print(f"\n--- 3. Atenção Visual e Orientação da Cabeça (VMC) ---")
         print(f"  Inclinação média: {np.mean(pitch_cabeca):+.1f}° | Olhar Frente: {pct_neutro:.1f}% do tempo")
     else:
         cabeca_nos_passos = [0.0] * n_total
 
     # 3. Parâmetros Espaciais da Marcha
-    print(f"\n--- Parâmetros Espaciais da Marcha (Sincronizados no Heel-Strike) ---")
+    print(f"\n--- 4. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
         desvio_passo = np.std(passos_validos)
         media_alt = np.mean(alturas_validas)
         desvio_alt = np.std(alturas_validas)
+        media_base = np.mean(larg_base_m) * 100.0
 
         print(f"  Comprimento médio da passada: {media_passo:.3f} m (± {desvio_passo:.3f} m)")
-        print(f"  Altura máxima da passada:     {media_alt:.1f} cm (± {desvio_alt:.1f} cm)")
+        print(f"  Largura média da base (X):    {media_base:.1f} cm (Base de suporte lateral)")
+        print(f"  Clearance médio (elevação):   {media_alt:.1f} cm (± {desvio_alt:.1f} cm)")
 
-        mask_esq = pes_validos == "ESQ"
-        mask_dir = pes_validos == "DIR"
+        mask_esq = np.array(["ESQ" in p for p in pes_validos])
+        mask_dir = np.array(["DIR" in p for p in pes_validos])
         n_esq = np.sum(mask_esq)
         n_dir = np.sum(mask_dir)
         d_e = np.mean(passos_validos[mask_esq]) if n_esq > 0 else 0.0
@@ -693,8 +840,8 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
         alt_e = np.mean(alturas_validas[mask_esq]) if n_esq > 0 else 0.0
         alt_d = np.mean(alturas_validas[mask_dir]) if n_dir > 0 else 0.0
 
-        print(f"  Pé ESQ ({n_esq} passos): {d_e:.3f} m | Altura Real: {alt_e:.1f} cm")
-        print(f"  Pé DIR ({n_dir} passos): {d_d:.3f} m | Altura Real: {alt_d:.1f} cm")
+        print(f"  Pé ESQ ({n_esq} passos): {d_e:.3f} m | Altura: {alt_e:.1f} cm")
+        print(f"  Pé DIR ({n_dir} passos): {d_d:.3f} m | Altura: {alt_d:.1f} cm")
         if d_e > 0 and d_d > 0:
             simetria = (1.0 - abs(d_e - d_d) / ((d_e + d_d) / 2.0)) * 100.0
             print(f"  Índice de Simetria do Passo:  {simetria:.1f}%")
@@ -702,13 +849,31 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
         if len(tempos_validos) >= 2:
             cadencia = 60.0 / np.mean(np.diff(tempos_validos))
             print(f"  Cadência estimada:            {cadencia:.1f} passos/min")
+
+        # 4. Biomarcadores Específicos para Doença de Parkinson (Seção 5 da Nota Técnica)
+        cv_passo = (desvio_passo / media_passo) * 100.0 if media_passo > 0 else 0.0
+        n_microbasia = np.sum(passos_validos < 0.30)
+        pct_microbasia = (n_microbasia / len(passos_validos)) * 100.0
+        n_baixo_clearance = np.sum(alturas_validas < 3.5)
+        pct_baixo_clearance = (n_baixo_clearance / len(alturas_validas)) * 100.0
+
+        print(f"\n--- 5. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---")
+        if cv_passo > 10.0:
+            alerta_cv = "⚠ ALTO (Elevado Risco de Quedas)"
+        elif cv_passo >= 6.0:
+            alerta_cv = "⚡ MODERADO (Atenção ao Equilíbrio)"
+        else:
+            alerta_cv = "✔ BAIXO (Padrão Regular e Estável)"
+        print(f"  Variabilidade do Passo (CV): {cv_passo:5.1f}% [{alerta_cv}]")
+        print(f"  Taxa de Microbasia (< 30cm): {n_microbasia}/{len(passos_validos)} ({pct_microbasia:.1f}%)" + (" ⚠ Indicativo de passos curtos" if pct_microbasia > 30 else ""))
+        print(f"  Risco de Arraste (Alt < 3.5cm): {n_baixo_clearance}/{len(alturas_validas)} ({pct_baixo_clearance:.1f}%)" + (" ⚠ Risco de tropeço" if pct_baixo_clearance > 20 else ""))
     else:
         media_passo = 0.0
 
-    # 4. Tabela Integrada
-    print("\n--- Tabela Integrada Passo a Passo (Timing Definido pelo Heel-Strike SolarXR) ---")
-    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<5} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Alt.Real(cm)':<14} {'Tronco':<10} {'Olhar':<14} {'Status'}")
-    print("-" * 95)
+    # 5. Tabela Integrada
+    print("\n--- Tabela Integrada Passo a Passo (Sincronia Heel-Strike SolarXR + Projeção Anteroposterior) ---")
+    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Alt.Real(cm)':<14} {'Tronco':<10} {'Olhar':<14} {'Status'}")
+    print("-" * 100)
     for i, (t_p, d_p, imp_p, alt_p, pe_p, tr_p, cb_p) in enumerate(zip(
         tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
     )):
@@ -716,10 +881,10 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
         status = "Válido" if valido else "⚠ Outlier"
         _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
         tr_str = f"{tr_p:+.1f}°" if tem_peito else "N/A"
-        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<5} {imp_p:<15.1f} {d_p:<13.3f} {alt_p:<14.1f} {tr_str:<10} {olhar_lbl:<14} {status}")
-    print("=" * 85)
+        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {imp_p:<15.1f} {d_p:<13.3f} {alt_p:<14.1f} {tr_str:<10} {olhar_lbl:<14} {status}")
+    print("=" * 90)
 
-    # 5. Salva CSV Unificado
+    # 6. Salva CSV Unificado
     with open(NOME_ARQUIVO_PASSOS, mode='w', newline='', encoding="utf-8") as f:
         escritor = csv.writer(f)
         escritor.writerow([
@@ -738,36 +903,37 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
 
     # ================= GRÁFICOS INTEGRADOS =================
     tem_imu_plot = len(dados_imu["ESQ"]["t"]) > 20 or len(dados_imu["DIR"]["t"]) > 20
-    painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + (1 if tem_cabeca else 0) + 1  # +1 para o Quadril/Postura
+    painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + (1 if tem_cabeca else 0) + 1
     total_subplots = 3 + painéis_extras
     fig, axes = plt.subplots(total_subplots, 1, figsize=(14, 2.5 * total_subplots), sharex=False)
 
     idx_ax = 0
 
-    # Painel 1: Distância entre os tornozelos com os instantes exatos de Heel-Strike
+    # Painel 1: Projeção Vetorial Anteroposterior (cruzando o zero!)
     ax_dist = axes[idx_ax]
-    ax_dist.plot(t_passo, dist, color='steelblue', label='Distância Horizontal OSC (m)', linewidth=1.4)
+    ax_dist.plot(t_passo, d_passo_ap, color='steelblue', label='Projeção Vetorial Anteroposterior D_passo(t)', linewidth=1.5)
+    ax_dist.axhline(0, color='gray', linestyle=':', label='Cruzamento das Pernas (Mid-Stance = 0m)')
+
     for i in range(len(tempos_impactos)):
         t_hs = tempos_impactos[i]
         d_hs = dist_impactos[i]
+        proj_hs = projecoes_ap[i]
         pe_hs = pes_passos[i]
         val = mascara_validos[i]
-        cor = "green" if pe_hs == "DIR" else "darkorange"
+        cor = "green" if "DIR" in pe_hs else "darkorange"
         marcador = "v" if val else "x"
-        ax_dist.scatter(t_hs, d_hs, color=cor, s=80, zorder=5, marker=marcador,
-                        label=f"Heel-Strike {pe_hs}" if f"Heel-Strike {pe_hs}" not in ax_dist.get_legend_handles_labels()[1] else "")
+        ax_dist.scatter(t_hs, proj_hs, color=cor, s=80, zorder=5, marker=marcador)
         if val:
-            ax_dist.annotate(f"{d_hs:.2f}m", (t_hs, d_hs + 0.03), fontsize=8, ha="center", fontweight="bold")
+            ax_dist.annotate(f"{d_hs:.2f}m", (t_hs, proj_hs + (0.04 if proj_hs >= 0 else -0.06)),
+                            fontsize=8, ha="center", fontweight="bold", color=cor)
 
-    if len(passos_validos) > 0:
-        ax_dist.axhline(media_passo, color='black', linestyle='--', alpha=0.6, label=f'Média: {media_passo:.3f} m')
-    ax_dist.set_ylabel('Distância (m)')
-    ax_dist.set_title('1. Comprimento da Passada (Sincronizado no Exato Momento do Heel-Strike da IMU)', fontweight="bold")
+    ax_dist.set_ylabel('Avanço (m)')
+    ax_dist.set_title('1. Projeção Vetorial Anteroposterior (D_passo cruzando zero no Mid-Stance — Seção 3)', fontweight="bold")
     ax_dist.legend(loc='upper right', fontsize=8)
     ax_dist.grid(True, alpha=0.3)
     idx_ax += 1
 
-    # Painel 2: Acelerações das IMUs dos Pés (SolarXR Impactos)
+    # Painel 2: Acelerações das IMUs e Sincronia de Impacto
     if tem_imu_plot:
         ax_imu = axes[idx_ax]
         t_ie = np.array(dados_imu["ESQ"]["t"])
@@ -776,30 +942,31 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
         a_id = np.array(dados_imu["DIR"]["acc"])
 
         if len(t_ie) > 0:
-            ax_imu.plot(t_ie, a_ie, color='darkorange', alpha=0.75, label='Aceleração IMU Pé Esquerdo (m/s²)')
+            ax_imu.plot(t_ie, a_ie, color='darkorange', alpha=0.75, label='Aceleração Cadarço ESQ (m/s²)')
         if len(t_id) > 0:
-            ax_imu.plot(t_id, a_id, color='green', alpha=0.75, label='Aceleração IMU Pé Direito (m/s²)')
+            ax_imu.plot(t_id, a_id, color='green', alpha=0.75, label='Aceleração Cadarço DIR (m/s²)')
 
-        ax_imu.axhline(LIMIAR_IMPACTO_ACC, color='red', linestyle=':', label=f'Limiar Impacto ({LIMIAR_IMPACTO_ACC} m/s²)')
+        ax_imu.axhline(LIMIAR_IMPACTO_ACC, color='red', linestyle=':', label=f'Limiar Sensível Parkinson ({LIMIAR_IMPACTO_ACC} m/s²)')
         ax_imu.set_ylabel('Acc (m/s²)')
-        ax_imu.set_title('2. Aceleração Física das IMUs (SolarXR) — Detecção Precisa dos Impactos de Calcanhar', fontweight="bold")
+        ax_imu.set_title('2. Aceleração Física das IMUs no Cadarço (SolarXR) — Timing de Impacto Mecânico', fontweight="bold")
         ax_imu.legend(loc='upper right', fontsize=8)
         ax_imu.grid(True, alpha=0.3)
         idx_ax += 1
 
-    # Painel 3: Altura Real dos Pés (Imune à Inclinação)
+    # Painel 3: Altura Real dos Pés (Referencial Pelvino Imune à Inclinação)
     ax_alt = axes[idx_ax]
-    ax_alt.plot(t_passo, elev_esq_cm, color='dodgerblue', label='Elevação Real Pé ESQ (cm)')
-    ax_alt.plot(t_passo, elev_dir_cm, color='darkorange', label='Elevação Real Pé DIR (cm)')
+    ax_alt.plot(t_passo, elev_esq_cm, color='dodgerblue', label='Elevação Pé ESQ (cm)')
+    ax_alt.plot(t_passo, elev_dir_cm, color='darkorange', label='Elevação Pé DIR (cm)')
+    ax_alt.axhspan(0, 3.5, color='tomato', alpha=0.10, label='Zona Risco de Tropeço (< 3.5 cm)')
     ax_alt.set_ylabel('Elevação (cm)')
-    ax_alt.set_title('3. Altura Real dos Pés (Piso Dinâmico de Apoio — Imune à Inclinação do Tronco)', fontweight="bold")
+    ax_alt.set_title('3. Altura Real dos Pés (Referencial Pelvino — 100% Imune à Inclinação do Tronco)', fontweight="bold")
     ax_alt.legend(loc='upper right', fontsize=8)
     ax_alt.grid(True, alpha=0.3)
     idx_ax += 1
 
-    # Painel 4: Quadril e Classificação Postural (Sentado vs Em Pé)
+    # Painel 4: Quadril e Postura
     ax_quad = axes[idx_ax]
-    ax_quad.plot(t_passo, alt_quadril_cm, color='teal', label='Altura do Quadril ao Solo (cm)', linewidth=1.5)
+    ax_quad.plot(t_passo, alt_quadril_cm, color='teal', label='Altura Quadril ao Solo (cm)', linewidth=1.5)
     ax_quad.axhline(LIMIAR_QUADRIL_EM_PE * 100, color='red', linestyle='--', label=f'Limiar Sentado/Em Pé ({LIMIAR_QUADRIL_EM_PE*100:.0f} cm)')
     ax_quad.fill_between(t_passo, 0, LIMIAR_QUADRIL_EM_PE * 100, color='orange', alpha=0.10, label='Zona Sentado')
     ax_quad.fill_between(t_passo, LIMIAR_QUADRIL_EM_PE * 100, 120, color='lightgreen', alpha=0.10, label='Zona Em Pé')
@@ -809,51 +976,48 @@ def gerar_relatorio_e_graficos(t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quad
     ax_quad.grid(True, alpha=0.3)
     idx_ax += 1
 
-    # Painel 5: Tronco (se houver)
+    # Painel 5: Tronco
     if tem_peito:
         ax_tr = axes[idx_ax]
         t_peito = np.array(dados[TRACKER_PEITO]["t"])
         pitch_peito = np.array(dados[TRACKER_PEITO]["pitch"])
-        ax_tr.plot(t_peito, pitch_peito, color='purple', label='Inclinação do Tronco (Pitch)')
+        ax_tr.plot(t_peito, pitch_peito, color='purple', label='Inclinação Tronco (Pitch)')
         ax_tr.axhline(0, color='gray', linestyle=':', label='Vertical (0°)')
         ax_tr.set_ylabel('Tronco (°)')
-        ax_tr.set_title('5. Postura e Estabilidade do Tronco', fontweight="bold")
+        ax_tr.set_title('5. Postura do Tronco (Avaliação de Camptocormia)', fontweight="bold")
         ax_tr.legend(loc='upper right', fontsize=8)
         ax_tr.grid(True, alpha=0.3)
         idx_ax += 1
 
-    # Painel 6: Cabeça / Olhar (se houver)
+    # Painel 6: Cabeça / Olhar
     if tem_cabeca:
         ax_cb = axes[idx_ax]
         t_cb = np.array(dados["cabeca"]["t"])
         pitch_cb = np.array(dados["cabeca"]["pitch"])
         ax_cb.plot(t_cb, pitch_cb, color='black', linewidth=1.2, label='Olhar / Cabeça (Pitch)')
-        ax_cb.axhline(0, color='gray', linestyle=':', label='Linha Neutra (0°)')
-        ax_cb.axhspan(LIMIAR_CIMA, 60, color='dodgerblue', alpha=0.12, label='Olhar p/ Cima')
-        ax_cb.axhspan(LIMIAR_BAIXO, LIMIAR_CIMA, color='mediumseagreen', alpha=0.15, label='Neutro (Frente)')
-        ax_cb.axhspan(LIMIAR_MUITO_BAIXO, LIMIAR_BAIXO, color='gold', alpha=0.18, label='Olhar p/ Baixo')
-        ax_cb.axhspan(-90, LIMIAR_MUITO_BAIXO, color='tomato', alpha=0.20, label='Olhar no Chão')
+        ax_cb.axhline(0, color='gray', linestyle=':')
+        ax_cb.axhspan(LIMIAR_BAIXO, LIMIAR_CIMA, color='mediumseagreen', alpha=0.15, label='Frente')
+        ax_cb.axhspan(-90, LIMIAR_MUITO_BAIXO, color='tomato', alpha=0.20, label='Chão')
         ax_cb.set_ylabel('Cabeça (°)')
-        ax_cb.set_title('6. Direção da Atenção Visual (Inclinação da Cabeça)', fontweight="bold")
-        ax_cb.legend(loc='upper right', fontsize=8, ncol=3)
+        ax_cb.set_title('6. Atenção Visual (Inclinação da Cabeça)', fontweight="bold")
+        ax_cb.legend(loc='upper right', fontsize=8)
         ax_cb.grid(True, alpha=0.3)
         idx_ax += 1
 
-    # Painel 7: Gráfico de Barras Passo a Passo
+    # Painel 7: Barras Passo a Passo
     ax_bar = axes[idx_ax]
     x_indices = np.arange(1, n_total + 1)
     largura = 0.38
     ax_bar.bar(x_indices - largura/2, dist_impactos, width=largura, color='steelblue', label='Comprimento (m)')
+    ax_bar.axhline(0.30, color='goldenrod', linestyle='--', alpha=0.8, label='Limiar Microbasia (30 cm)')
     ax_bar.set_ylabel('Comprimento (m)', color='steelblue')
-    ax_bar.tick_params(axis='y', labelcolor='steelblue')
-    ax_bar.set_xlabel('Número da Passada')
-    ax_bar.set_title('7. Relação Comprimento (m) vs Altura Real (cm) por Passada', fontweight="bold")
+    ax_bar.set_xlabel('Número do Passo')
+    ax_bar.set_title('7. Comprimento de Passo vs Altura Real com Biomarcadores de Parkinson', fontweight="bold")
     ax_bar.set_xticks(x_indices)
 
     ax_bar_twin = ax_bar.twinx()
     ax_bar_twin.bar(x_indices + largura/2, alturas_passos_cm, width=largura, color='coral', label='Altura Real (cm)')
     ax_bar_twin.set_ylabel('Altura Real (cm)', color='coral')
-    ax_bar_twin.tick_params(axis='y', labelcolor='coral')
     ax_bar.grid(True, alpha=0.3, axis='x')
 
     plt.tight_layout()
@@ -897,15 +1061,15 @@ def main():
         except Exception as e:
             print(f"[Aviso] Falha ao iniciar stream SolarXR: {e}")
 
-    print("=" * 85)
-    print("   SISTEMA UNIFICADO DE MARCHA E POSTURA COM ALTURA REAL DOS PÉS")
-    print("=" * 85)
+    print("=" * 90)
+    print("   SISTEMA UNIFICADO DE MARCHA (SOLARXR IMU + OSC) — ARQUITETURA ARGON")
+    print("=" * 90)
     print(f"Porta 9000 (VRChat OSC) : Pés ({TORNOZELO_ESQ}, {TORNOZELO_DIR}), Quadril ({TRACKER_QUADRIL}), Peito ({TRACKER_PEITO})")
     print(f"Porta 39539 (VMC)       : Cabeça ({OSSO_CABECA.upper()} - Nuca)")
-    print(f"Porta 21110 (SolarXR)   : Aceleração física das IMUs (Heel-Strike Timing)")
-    print("-" * 85)
-    print("-> Fique em repouso nos primeiros 1.5s para calibração automática do piso.")
-    print("-> Caminhe ou realize o teste (em pé ou sentado).")
+    print(f"Porta 21110 (SolarXR)   : Aceleração direta das IMUs dos cadarços (Heel-Strike Timing)")
+    print("-" * 90)
+    print("-> ROTINA INICIAL (5s): Fique em postura ortostática neutra ou faça 3 elevações no lugar.")
+    print("-> Caminhe normalmente pelo ambiente (modo sensível a microbasia ativado).")
     print("-> Pressione 'Ctrl + C' para finalizar e abrir os relatórios e gráficos.\n")
 
     try:
@@ -930,12 +1094,12 @@ def main():
             print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
             return
 
-        t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
+        t_passo, d_passo_ap, larg_base_m, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
             d_esq, d_dir, d_quad
         )
 
-        tempos_impactos, dist_impactos, impactos_ms2, pes_passos = detectar_passos_por_impacto_imu(
-            t_passo, dist, taxa
+        tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
+            t_passo, d_passo_ap, taxa
         )
 
         if len(dist_impactos) == 0:
@@ -946,8 +1110,8 @@ def main():
         mascara_validos = remover_outliers(dist_impactos)
 
         gerar_relatorio_e_graficos(
-            t_passo, dist, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas,
-            tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, mascara_validos
+            t_passo, d_passo_ap, larg_base_m, elev_esq_cm, elev_dir_cm, alt_quadril_cm, posturas,
+            tempos_impactos, dist_impactos, impactos_ms2, alturas_passos_cm, pes_passos, projecoes_ap, mascara_validos
         )
 
 
