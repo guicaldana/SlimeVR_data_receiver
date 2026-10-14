@@ -71,8 +71,9 @@ LIMIAR_CIMA = 15.0
 LIMIAR_BAIXO = -15.0
 LIMIAR_MUITO_BAIXO = -35.0
 
-# Calibração inicial recomendada (Seção 5)
-CALIB_DURACAO_S = 5.0         # 5 segundos de rotina de verificação ortostática neutra
+# Calibração inicial estática recomendada (Seção 5)
+TEMPO_PREPARACAO_S = 5.0      # 5 segundos de contagem regressiva para se posicionar
+TEMPO_CALIB_ESTATICA_S = 3.0  # 3 segundos de amostragem estática com ambos os pés no chão
 
 # Arquivos de saída
 os.makedirs("dados", exist_ok=True)
@@ -155,12 +156,17 @@ rot_atual = {
     "cabeca": None
 }
 
-# Calibração inicial de assimetria basal (Delta_cal_esq e Delta_cal_dir - Seção 2)
+# Parâmetros de calibração estática dos pés e chão
+calibrado = False
+dist_qp_e_ref = 0.0
+dist_qp_d_ref = 0.0
+offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pés no chão
+chao_esq_ref = 0.0
+chao_dir_ref = 0.0
+limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
 delta_cal_esq = 0.0
 delta_cal_dir = 0.0
 chao_base_calibrado = None
-amostras_calib_e = []
-amostras_calib_d = []
 
 # Instâncias dos Filtros One Euro para suavização em tempo real
 euro_dist = OneEuroFilter(min_cutoff=0.8, beta=0.005)
@@ -264,18 +270,6 @@ def osc_handler_9000(address, *args):
                 dados[tracker_id]["y"].append(y)
                 dados[tracker_id]["z"].append(z)
                 pos_atual[tracker_id] = (x, y, z)
-
-                # Calibração inicial de assimetria basal nos primeiros 5s (Seção 2, Eq 1.1)
-                if t_rel <= CALIB_DURACAO_S:
-                    if tracker_id == TORNOZELO_ESQ: amostras_calib_e.append(y)
-                    if tracker_id == TORNOZELO_DIR: amostras_calib_d.append(y)
-                    if len(amostras_calib_e) >= 20 and len(amostras_calib_d) >= 20:
-                        med_e = float(np.mean(amostras_calib_e))
-                        med_d = float(np.mean(amostras_calib_d))
-                        piso_min = min(med_e, med_d)
-                        delta_cal_esq = med_e - piso_min
-                        delta_cal_dir = med_d - piso_min
-                        chao_base_calibrado = piso_min
 
         elif tipo == "rotation" and len(args) >= 3:
             if tracker_id == TRACKER_PEITO:
@@ -414,9 +408,9 @@ def classificar_estado_usuario(p_esq, p_dir, p_quad, rot_coxa_e, rot_coxa_d, a_e
     """
     Classifica Postura e Movimento com Nível Dinâmico do Solo e Referencial Pelvino.
     """
-    # Nível Dinâmico do Solo corrigido com calibração basal (Eq. 1.1 e 1.2 da Nota Técnica)
-    y_e_corr = p_esq[1] - delta_cal_esq
-    y_d_corr = p_dir[1] - delta_cal_dir
+    # Nível Dinâmico do Solo equalizado com a calibração estática
+    y_e_corr = p_esq[1]
+    y_d_corr = p_dir[1] - offset_calib_pernas
     chao_instantaneo = min(y_e_corr, y_d_corr)
 
     # 1. Postura (EM PÉ vs SENTADO)
@@ -491,18 +485,28 @@ def mostrar_feedback():
 
     # 2. Altura Pélvica Imune à Inclinação (Eq. 1.3 da Nota Técnica)
     if p_quad is not None:
-        dist_qp_e = p_quad[1] - (p_esq[1] - delta_cal_esq)
-        dist_qp_d = p_quad[1] - (p_dir[1] - delta_cal_dir)
+        dist_qp_e = p_quad[1] - p_esq[1]
+        dist_qp_d = (p_quad[1] - p_dir[1]) + offset_calib_pernas
         l_apoio = max(dist_qp_e, dist_qp_d)
         alt_e_raw = max(0.0, (l_apoio - dist_qp_e) * 100.0)
         alt_d_raw = max(0.0, (l_apoio - dist_qp_d) * 100.0)
     else:
-        chao_local = min(p_esq[1], p_dir[1])
+        chao_local = min(p_esq[1], p_dir[1] - offset_calib_pernas)
         alt_e_raw = max(0.0, (p_esq[1] - chao_local) * 100.0)
-        alt_d_raw = max(0.0, (p_dir[1] - chao_local) * 100.0)
+        alt_d_raw = max(0.0, ((p_dir[1] - offset_calib_pernas) - chao_local) * 100.0)
+
+    # Zona morta de solo: elimina qualquer flutuação residual de sensor com ambos os pés no chão
+    if alt_e_raw < limiar_ruido_chao:
+        alt_e_raw = 0.0
+    if alt_d_raw < limiar_ruido_chao:
+        alt_d_raw = 0.0
 
     alt_e_cm = euro_alt_e.filter(tempo, alt_e_raw)
     alt_d_cm = euro_alt_d.filter(tempo, alt_d_raw)
+    if alt_e_cm < 0.2:
+        alt_e_cm = 0.0
+    if alt_d_cm < 0.2:
+        alt_d_cm = 0.0
 
     postura, movimento, _, alt_quad_cm = classificar_estado_usuario(
         p_esq, p_dir, p_quad, r_coxa_e, r_coxa_d, a_e, a_d, var_dist
@@ -516,11 +520,7 @@ def mostrar_feedback():
     else:
         str_passo = f"DirAnt: {-d_ap_filtrada:+.2f}m"
 
-    # Período de Calibração / Validação Inicial de 5s (Seção 5)
-    if tempo <= CALIB_DURACAO_S:
-        str_calib = f" [CALIBRAÇÃO {CALIB_DURACAO_S - tempo:3.1f}s - Fique neutro/3 elevações]"
-    else:
-        str_calib = ""
+    str_calib = " [CALIBRADO]" if calibrado else ""
 
     str_estado = f"[{postura} | {movimento}]"
     str_alt = f"Alt: E={alt_e_cm:4.1f}cm D={alt_d_cm:4.1f}cm"
@@ -566,13 +566,9 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
     y_esq_filt = aplicar_filtro(np.interp(t_comum, t_esq, y_esq), 5.0, taxa_amostragem)
     y_dir_filt = aplicar_filtro(np.interp(t_comum, t_dir, y_dir), 5.0, taxa_amostragem)
 
-    # Calibração de assimetria basal nos primeiros segundos
-    mask_calib = t_comum <= min(t_comum[0] + CALIB_DURACAO_S, t_comum[-1])
-    d_e_basal = np.mean(y_esq_filt[mask_calib]) if np.any(mask_calib) else y_esq_filt[0]
-    d_d_basal = np.mean(y_dir_filt[mask_calib]) if np.any(mask_calib) else y_dir_filt[0]
-    piso_min = min(d_e_basal, d_d_basal)
-    y_esq_corr = y_esq_filt - (d_e_basal - piso_min)
-    y_dir_corr = y_dir_filt - (d_d_basal - piso_min)
+    # Nível do solo equalizado com calibração estática
+    y_esq_corr = y_esq_filt
+    y_dir_corr = y_dir_filt - offset_calib_pernas
 
     # 1. Projeção Vetorial Anteroposterior com o Vetor de Direção do Quadril (Seção 3)
     dx = x_esq_i - x_dir_i
@@ -619,8 +615,8 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
         alt_quadril = (y_quad_filt - chao_dinamico) * 100.0
         posturas = np.where(alt_quadril >= (LIMIAR_QUADRIL_EM_PE * 100), "EM PÉ", "SENTADO")
 
-        dist_qp_e = y_quad_filt - y_esq_corr
-        dist_qp_d = y_quad_filt - y_dir_corr
+        dist_qp_e = y_quad_filt - y_esq_filt
+        dist_qp_d = (y_quad_filt - y_dir_filt) + offset_calib_pernas
         l_apoio = np.maximum(dist_qp_e, dist_qp_d)
         elev_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
         elev_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
@@ -629,6 +625,10 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
         elev_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
         alt_quadril = np.full_like(t_comum, 90.0)
         posturas = np.full_like(t_comum, "EM PÉ", dtype=object)
+
+    # Aplica zona morta de estabilização contra ruído e tremor no solo
+    elev_esq[elev_esq < limiar_ruido_chao] = 0.0
+    elev_dir[elev_dir < limiar_ruido_chao] = 0.0
 
     return t_comum, d_passo_ap_filt, largura_base_m, elev_esq, elev_dir, alt_quadril, posturas, taxa_amostragem
 
@@ -1042,6 +1042,113 @@ def rodar_servidor(porta, handler):
         print(f"\n[AVISO] Erro na porta {porta}: {e}")
 
 
+def executar_calibracao_inicial():
+    """
+    Executa a calibração estática inicial com os dois pés apoiados no chão.
+    Calcula as referências pélvicas, equaliza o offset estrutural dos cadarços
+    e define a zona morta para que ambos os pés marquem estritamente 0.0 cm no solo.
+    """
+    global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
+    global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
+    global tempo_inicial
+
+    print("\n" + "=" * 90)
+    print("   🎯 ETAPA 1: CALIBRAÇÃO ESTÁTICA DOS PÉS E CHÃO (NIVELAMENTO EM 0.0 CM)")
+    print("=" * 90)
+    print("   1. Fique em pé na sua postura natural, com os DOIS PÉS apoiados no chão.")
+    print("   2. Não levante os pés durante a calibração para registrar a referência exata do solo.")
+    print("-" * 90)
+
+    # 1. Aguarda trackers essenciais (Pés e Quadril)
+    print("[*] Aguardando sinal dos trackers de Pés (2, 3) e Quadril (1)...", end="", flush=True)
+    while rodando:
+        with lock:
+            pe = pos_atual[TORNOZELO_ESQ]
+            pd = pos_atual[TORNOZELO_DIR]
+            pq = pos_atual[TRACKER_QUADRIL]
+        if pe is not None and pd is not None and pq is not None:
+            break
+        time.sleep(0.1)
+    print(" [CONECTADOS!]\n", flush=True)
+
+    # 2. Contagem para posicionamento do usuário (não-bloqueante)
+    try:
+        import msvcrt
+        tem_msvcrt = True
+    except ImportError:
+        tem_msvcrt = False
+
+    print("👉 Posicione-se com ambos os pés no chão.")
+    print("   A calibração iniciará em 5 segundos (ou pressione [ENTER] para iniciar agora):\n")
+    t_limite = time.time() + TEMPO_PREPARACAO_S
+    while time.time() < t_limite and rodando:
+        restante = int(math.ceil(t_limite - time.time()))
+        print(f"   ⏳ Iniciando em {restante}s... (pressione [ENTER] para acelerar)   ", end="\r", flush=True)
+        if tem_msvcrt and msvcrt.kbhit():
+            msvcrt.getch()
+            break
+        time.sleep(0.1)
+
+    print("\n\n[*] Calibrando em 3 segundos... Fique parado com os dois pés no chão!")
+    for cont in (3, 2, 1):
+        print(f"    Iniciando amostragem em {cont}s...", end="\r", flush=True)
+        time.sleep(1.0)
+    print("    >>> COLETANDO REFERÊNCIA BASAL... Fique imóvel! <<<               ", flush=True)
+
+    # Coleta 3 segundos de amostras estáticas
+    amostras_ye = []
+    amostras_yd = []
+    amostras_yq = []
+    amostras_de = []
+    amostras_dd = []
+
+    t_fim = time.time() + TEMPO_CALIB_ESTATICA_S
+    while time.time() < t_fim and rodando:
+        with lock:
+            pe = pos_atual[TORNOZELO_ESQ]
+            pd = pos_atual[TORNOZELO_DIR]
+            pq = pos_atual[TRACKER_QUADRIL]
+        if pe is not None and pd is not None and pq is not None:
+            amostras_ye.append(pe[1])
+            amostras_yd.append(pd[1])
+            amostras_yq.append(pq[1])
+            amostras_de.append(pq[1] - pe[1])
+            amostras_dd.append(pq[1] - pd[1])
+        time.sleep(0.01)
+
+    if len(amostras_de) >= 20 and len(amostras_dd) >= 20:
+        dist_qp_e_ref = float(np.median(amostras_de))
+        dist_qp_d_ref = float(np.median(amostras_dd))
+        chao_esq_ref = float(np.median(amostras_ye))
+        chao_dir_ref = float(np.median(amostras_yd))
+
+        # Equaliza perfeitamente o offset de montagem dos trackers nos cadarços
+        offset_calib_pernas = dist_qp_e_ref - dist_qp_d_ref
+
+        # Ruído basal (desvio padrão)
+        sigma_e = float(np.std(amostras_ye)) * 100.0
+        sigma_d = float(np.std(amostras_yd)) * 100.0
+        limiar_ruido_chao = max(1.0, 3.0 * max(sigma_e, sigma_d))
+
+        calibrado = True
+        print("=" * 90)
+        print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
+        print(f"      • Ref. Pélvica E : {dist_qp_e_ref*100:5.1f} cm  |  D : {dist_qp_d_ref*100:5.1f} cm")
+        print(f"      • Offset Pés     : {offset_calib_pernas*100:+5.1f} cm (ambos nivelados a 0.0 mm)")
+        print(f"      • Zona Morta Solo: {limiar_ruido_chao:5.1f} cm (anti-ruído/tremor)")
+        print("=" * 90)
+    else:
+        print("\n[Aviso] Poucas amostras na calibração. Mantendo limiares padrão.")
+
+    # 3. Zera os dados anteriores para que o teste de marcha comece limpo a partir de agora
+    with lock:
+        for t_id in dados:
+            dados[t_id] = {k: [] for k in dados[t_id]}
+        for l in dados_imu:
+            dados_imu[l] = {"t": [], "acc": []}
+        tempo_inicial = time.time()
+
+
 def main():
     global rodando
     # 1. Servidores OSC (Porta 9000) e VMC (Porta 39539)
@@ -1075,9 +1182,14 @@ def main():
     print(f"Porta 39539 (VMC)       : Cabeça ({OSSO_CABECA.upper()} - Nuca)")
     print(f"Porta 21110 (SolarXR)   : Aceleração direta das IMUs dos cadarços (Heel-Strike Timing)")
     print("-" * 90)
-    print("-> ROTINA INICIAL (5s): Fique em postura ortostática neutra ou faça 3 elevações no lugar.")
-    print("-> Caminhe normalmente pelo ambiente (modo sensível a microbasia ativado).")
-    print("-> Pressione 'Ctrl + C' para finalizar e abrir os relatórios e gráficos.\n")
+
+    # 3. Rotina de Calibração Estática Inicial
+    executar_calibracao_inicial()
+
+    print("\n" + "=" * 90)
+    print("   🚀 GRAVAÇÃO INICIADA! Pode caminhar normalmente.")
+    print("   Pressione 'Ctrl + C' a qualquer momento para finalizar e abrir os relatórios e gráficos.")
+    print("=" * 90 + "\n")
 
     try:
         while True:
