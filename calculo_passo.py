@@ -77,6 +77,9 @@ LIMIAR_MUITO_BAIXO = -35.0
 TEMPO_PREPARACAO_S = 5.0      # 5 segundos de contagem regressiva para se posicionar
 TEMPO_CALIB_ESTATICA_S = 3.0  # 3 segundos de amostragem estática com ambos os pés no chão
 
+# True = altura da pelve congelada na calibração; False = pelve acompanha o tracker em tempo real
+PELVE_FIXA = True
+
 # Arquivos de saída
 os.makedirs("dados", exist_ok=True)
 NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
@@ -167,6 +170,7 @@ dist_qp_d_ref = 0.0
 offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pés no chão
 chao_esq_ref = 0.0
 chao_dir_ref = 0.0
+yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -495,8 +499,9 @@ def mostrar_feedback():
     # 2. Folga Real do Solado com Pelve Fixa como Referencial Vertical
     if p_quad is not None and calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
         # Altura vertical de cada pé com a pelve mantida fixa (imune a inclinações de cabeça e tronco)
-        h_e = dist_qp_e_ref - (p_quad[1] - p_esq[1])
-        h_d = dist_qp_d_ref - (p_quad[1] - p_dir[1])
+        yq_uso = yq_ref if PELVE_FIXA else p_quad[1]
+        h_e = dist_qp_e_ref - (yq_uso - p_esq[1])
+        h_d = dist_qp_d_ref - (yq_uso - p_dir[1])
         piso_apoio = min(h_e, h_d)
         clearance_e_raw = max(0.0, (h_e - piso_apoio) * 100.0)
         clearance_d_raw = max(0.0, (h_d - piso_apoio) * 100.0)
@@ -630,8 +635,9 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
 
         if calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
             # Pelve como altura de referência fixa: imune a inclinações de cabeça e tronco
-            h_e = dist_qp_e_ref - (y_quad_filt - y_esq_filt)
-            h_d = dist_qp_d_ref - (y_quad_filt - y_dir_filt)
+            yq_uso = yq_ref if PELVE_FIXA else y_quad_filt
+            h_e = dist_qp_e_ref - (yq_uso - y_esq_filt)
+            h_d = dist_qp_d_ref - (yq_uso - y_dir_filt)
             piso_apoio = np.minimum(h_e, h_d)
             clearance_esq = np.maximum(0.0, h_e - piso_apoio) * 100.0
             clearance_dir = np.maximum(0.0, h_d - piso_apoio) * 100.0
@@ -1116,7 +1122,7 @@ def executar_calibracao_inicial():
     """
     global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
     global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
-    global L_coxa_pe_e_ref, L_coxa_pe_d_ref
+    global L_coxa_pe_e_ref, L_coxa_pe_d_ref, yq_ref
     global tempo_inicial
 
     print("\n" + "=" * 90)
@@ -1195,6 +1201,7 @@ def executar_calibracao_inicial():
         dist_qp_d_ref = float(np.median(amostras_dd))
         chao_esq_ref = float(np.median(amostras_ye))
         chao_dir_ref = float(np.median(amostras_yd))
+        yq_ref = float(np.median(amostras_yq))
         offset_calib_pernas = 0.0
 
         if len(amostras_lce) >= 20 and len(amostras_lcd) >= 20:
