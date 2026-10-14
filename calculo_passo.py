@@ -492,21 +492,15 @@ def mostrar_feedback():
     d_ap, larg_lat = calcular_projecao_anteroposterior(p_esq, p_dir, r_quad, p_quad)
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
-    # 2. Folga Real do Solado com Desacoplamento Pélvico (Imune a Báscula e Inclinação do Quadril)
-    if p_coxa_e is not None and p_coxa_d is not None and L_coxa_pe_e_ref > 0 and L_coxa_pe_d_ref > 0:
-        # Encurtamento vertical de cada perna em relação à sua própria articulação de quadril (coxa)
-        dy_e = L_coxa_pe_e_ref - (p_coxa_e[1] - p_esq[1])
-        dy_d = L_coxa_pe_d_ref - (p_coxa_d[1] - p_dir[1])
-        piso_apoio = min(dy_e, dy_d)
-        clearance_e_raw = max(0.0, (dy_e - piso_apoio) * 100.0)
-        clearance_d_raw = max(0.0, (dy_d - piso_apoio) * 100.0)
-    else:
-        # Fallback cinemático pelo solo calibrado estático
-        y_e_norm = p_esq[1] - chao_esq_ref
-        y_d_norm = p_dir[1] - chao_dir_ref
-        piso_apoio = min(y_e_norm, y_d_norm)
-        clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
-        clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
+    # 2. Folga Real do Solado ao Chão (Foot Clearance)
+    y_e_norm = p_esq[1] - chao_esq_ref
+    y_d_norm = p_dir[1] - chao_dir_ref
+    # Âncora dinâmica no pé de apoio (imunidade a inclinação de tronco)
+    piso_apoio = min(y_e_norm, y_d_norm)
+
+    # Folga Real da Sola do calçado ao solo (True Foot Clearance)
+    clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
+    clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
 
     # Elevação Articular do Tornozelo por Flexão do Joelho (esperado: 10 a 18 cm)
     if p_quad is not None:
@@ -656,23 +650,9 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
         elev_tornoz_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
         elev_tornoz_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
 
-    # 1. Folga Real do Solado ao Chão (True Foot Clearance com Desacoplamento Pélvico)
-    tem_coxas = (d_coxa_e is not None and d_coxa_d is not None and
-                 len(d_coxa_e.get("t", [])) > 10 and len(d_coxa_d.get("t", [])) > 10 and
-                 len(d_coxa_e.get("y", [])) > 10 and len(d_coxa_d.get("y", [])) > 10 and
-                 L_coxa_pe_e_ref > 0 and L_coxa_pe_d_ref > 0)
-
-    if tem_coxas:
-        y_ce_filt = aplicar_filtro(np.interp(t_comum, np.array(d_coxa_e["t"]), np.array(d_coxa_e["y"])), 5.0, taxa_amostragem)
-        y_cd_filt = aplicar_filtro(np.interp(t_comum, np.array(d_coxa_d["t"]), np.array(d_coxa_d["y"])), 5.0, taxa_amostragem)
-        dy_e = L_coxa_pe_e_ref - (y_ce_filt - y_esq_filt)
-        dy_d = L_coxa_pe_d_ref - (y_cd_filt - y_dir_filt)
-        piso_apoio_c = np.minimum(dy_e, dy_d)
-        clearance_esq = np.maximum(0.0, dy_e - piso_apoio_c) * 100.0
-        clearance_dir = np.maximum(0.0, dy_d - piso_apoio_c) * 100.0
-    else:
-        clearance_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
-        clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
+    # 1. Folga Real do Solado ao Chão (True Foot Clearance - sola do tênis)
+    clearance_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
+    clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
 
     # Aplica zona morta de estabilização contra ruído e tremor no solo
     clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
