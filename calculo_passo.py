@@ -490,7 +490,8 @@ def mostrar_feedback():
     # Normalização independente do solo calibrado para cada pé (elimina assimetrias estruturais)
     y_e_norm = p_esq[1] - chao_esq_ref
     y_d_norm = p_dir[1] - chao_dir_ref
-    piso_apoio = min(0.0, y_e_norm, y_d_norm)
+    # Âncora dinâmica no pé de apoio (imunidade a inclinação do tronco e elevações conjuntas)
+    piso_apoio = min(y_e_norm, y_d_norm)
 
     # Folga Real da Sola do calçado ao solo (True Foot Clearance - esperado: 1.5 a 4.5 cm)
     clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
@@ -537,7 +538,7 @@ def mostrar_feedback():
     str_calib = " [CALIBRADO]" if calibrado else ""
 
     str_estado = f"[{postura} | {movimento}]"
-    str_alt = f"Solado: E={clearance_e_cm:3.1f}cm D={clearance_d_cm:3.1f}cm (Tornoz: E={tornoz_e_raw:2.0f} D={tornoz_d_raw:2.0f})"
+    str_alt = f"Solado: E={clearance_e_cm:3.1f}cm D={clearance_d_cm:3.1f}cm"
     str_base = f"Base:{larg_lat*100:2.0f}cm"
     str_quad = f" | Quad:{alt_quad_cm:3.0f}cm" if alt_quad_cm is not None else ""
     str_trc = f" | Trc:{p_peito:+4.0f}°" if p_peito is not None else ""
@@ -583,7 +584,7 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
     # Normalização independente de solo calibrado para cada pé (elimina assimetrias estruturais)
     y_e_norm = y_esq_filt - chao_esq_ref
     y_d_norm = y_dir_filt - chao_dir_ref
-    piso_apoio = np.minimum(0.0, np.minimum(y_e_norm, y_d_norm))
+    piso_apoio = np.minimum(y_e_norm, y_d_norm)
 
     # 1. Projeção Vetorial Anteroposterior com o Vetor de Direção do Quadril (Seção 3)
     dx = x_esq_i - x_dir_i
