@@ -82,7 +82,7 @@ PELVE_FIXA = True
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
-ALTURA_CAIXA_CM = 7.0
+ALTURA_CAIXA_CM = 6.7
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 
 # Arquivos de saída
