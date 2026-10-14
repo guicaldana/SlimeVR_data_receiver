@@ -49,12 +49,14 @@ if MODO_CLINICO_PARKINSON:
     LIMIAR_IMPACTO_ACC = 1.8      # m/s² (sensível a contatos suaves sem choque forte de calcanhar)
     PROEMINENCIA_IMPACTO = 0.5    # m/s² (destaque do pico de impacto)
     DISTANCIA_MINIMA_PASSO = 0.10 # metros mínimos (10 cm - captura passos curtos e microbasia)
-    DIST_MIN_MESMO_PE_S = 0.28    # segundos mínimos entre passos do mesmo pé (suporta festinação rápida)
+    DIST_MIN_MESMO_PE_S = 0.65    # segundos mínimos entre passos do mesmo pé (evita Toe-Off e foot-flat)
+    DIST_MIN_PASSOS_GERAL_S = 0.32 # segundos mínimos entre passos alternados (cadência máx ~180 ppm)
 else:
     LIMIAR_IMPACTO_ACC = 4.5      # m/s² (adultos saudáveis com heel-strike vigoroso)
     PROEMINENCIA_IMPACTO = 1.5    # m/s²
     DISTANCIA_MINIMA_PASSO = 0.25 # metros mínimos (25 cm)
-    DIST_MIN_MESMO_PE_S = 0.45    # segundos mínimos
+    DIST_MIN_MESMO_PE_S = 0.75    # segundos mínimos entre passos do mesmo pé
+    DIST_MIN_PASSOS_GERAL_S = 0.35 # segundos mínimos entre passos alternados
 LIMIAR_MAD = 4.5                  # Z-score modificado para detecção de outliers
 
 # Compensação de atraso de fase do filtro SlimeVR OSC vs SolarXR (Seção 4 do relatório)
@@ -679,6 +681,14 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
             val_passo = d_passo_ap[idx_osc]
             comp_passo = abs(val_passo)
 
+            # Validação fisiológica da direção do passo (Polaridade Anteroposterior):
+            # No contato inicial (Heel-Strike), o pé de ataque DEVE estar à frente do quadril/outro pé.
+            # Se o impacto ocorreu com o pé posicionado atrás, trata-se da impulsão (Toe-Off), e não de um novo passo.
+            if lado == "ESQ" and val_passo < -0.02:
+                continue
+            if lado == "DIR" and val_passo > 0.02:
+                continue
+
             if comp_passo >= DISTANCIA_MINIMA_PASSO:
                 eventos_impacto.append({
                     "tempo": t_impacto_imu,
@@ -692,9 +702,9 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
 
     # 2. Resgate Multimodal por Inversão Cinemática (ZUPT / Extensão Máxima)
     # Detecta cristas positivas (Pé Esquerdo à frente) e vales negativos (Pé Direito à frente)
-    intervalo_min = int(taxa_amostragem * 0.25)
-    picos_pos, _ = find_peaks(d_passo_ap, height=DISTANCIA_MINIMA_PASSO, distance=intervalo_min, prominence=0.04)
-    vales_neg, _ = find_peaks(-d_passo_ap, height=DISTANCIA_MINIMA_PASSO, distance=intervalo_min, prominence=0.04)
+    intervalo_min = int(taxa_amostragem * DIST_MIN_MESMO_PE_S)
+    picos_pos, _ = find_peaks(d_passo_ap, height=DISTANCIA_MINIMA_PASSO, distance=intervalo_min, prominence=0.06)
+    vales_neg, _ = find_peaks(-d_passo_ap, height=DISTANCIA_MINIMA_PASSO, distance=intervalo_min, prominence=0.06)
 
     for g_idx in list(picos_pos) + list(vales_neg):
         t_g = t_comum[g_idx]
@@ -702,7 +712,7 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
         comp_g = abs(val_g)
         pe_estimado = "ESQ" if val_g > 0 else "DIR"
 
-        tem_impacto_proximo = any(abs(ev["tempo"] - t_g) <= 0.16 for ev in eventos_impacto)
+        tem_impacto_proximo = any(abs(ev["tempo"] - t_g) <= 0.22 for ev in eventos_impacto)
         if not tem_impacto_proximo:
             eventos_impacto.append({
                 "tempo": t_g,
@@ -719,11 +729,30 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
 
     eventos_impacto.sort(key=lambda ev: ev["tempo"])
 
-    # Filtro refratário (< 0.15s)
+    # Filtro de coerência fisiológica e eliminação de rebotes (Toe-off / vibração do cadarço)
     eventos_filtrados = []
     for ev in eventos_impacto:
-        if not eventos_filtrados or (ev["tempo"] - eventos_filtrados[-1]["tempo"]) >= 0.15:
+        if not eventos_filtrados:
             eventos_filtrados.append(ev)
+            continue
+
+        ult = eventos_filtrados[-1]
+        dt = ev["tempo"] - ult["tempo"]
+        pe_atual = ev["pe"].replace("*", "")
+        pe_ult = ult["pe"].replace("*", "")
+
+        # Picos sucessivos do mesmo pé em intervalo < DIST_MIN_MESMO_PE_S (rebote de cadarço / foot-flat)
+        if pe_atual == pe_ult and dt < DIST_MIN_MESMO_PE_S:
+            # Preserva o impacto de maior magnitude dentro do mesmo ciclo de passada
+            if ev["impacto_ms2"] > ult["impacto_ms2"]:
+                eventos_filtrados[-1] = ev
+            continue
+
+        # Passos alternados em intervalo biologicamente impossível (< DIST_MIN_PASSOS_GERAL_S)
+        if pe_atual != pe_ult and dt < DIST_MIN_PASSOS_GERAL_S:
+            continue
+
+        eventos_filtrados.append(ev)
 
     tempos = np.array([ev["tempo"] for ev in eventos_filtrados])
     comprimentos = np.array([ev["comprimento_m"] for ev in eventos_filtrados])
