@@ -127,8 +127,8 @@ dados = {
     TRACKER_QUADRIL: {"t": [], "x": [], "y": [], "z": [], "pitch": [], "yaw": []},
     TORNOZELO_ESQ: {"t": [], "x": [], "y": [], "z": []},
     TORNOZELO_DIR: {"t": [], "x": [], "y": [], "z": []},
-    TRACKER_COXA_ESQ: {"t": [], "pitch": []},
-    TRACKER_COXA_DIR: {"t": [], "pitch": []},
+    TRACKER_COXA_ESQ: {"t": [], "x": [], "y": [], "z": [], "pitch": []},
+    TRACKER_COXA_DIR: {"t": [], "x": [], "y": [], "z": [], "pitch": []},
     TRACKER_PEITO: {"t": [], "pitch": []},
     "cabeca": {"t": [], "pitch": [], "yaw": [], "roll": []}
 }
@@ -148,7 +148,9 @@ rodando = True
 pos_atual = {
     TRACKER_QUADRIL: None,
     TORNOZELO_ESQ: None,
-    TORNOZELO_DIR: None
+    TORNOZELO_DIR: None,
+    TRACKER_COXA_ESQ: None,
+    TRACKER_COXA_DIR: None
 }
 rot_atual = {
     TRACKER_QUADRIL: (0.0, 0.0), # (pitch, yaw)
@@ -165,6 +167,8 @@ dist_qp_d_ref = 0.0
 offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pés no chão
 chao_esq_ref = 0.0
 chao_dir_ref = 0.0
+L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
+L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
 delta_cal_esq = 0.0
 delta_cal_dir = 0.0
@@ -266,7 +270,7 @@ def osc_handler_9000(address, *args):
 
         if tipo == "position" and len(args) == 3:
             x, y, z = args
-            if tracker_id in (TORNOZELO_ESQ, TORNOZELO_DIR, TRACKER_QUADRIL):
+            if tracker_id in (TORNOZELO_ESQ, TORNOZELO_DIR, TRACKER_QUADRIL, TRACKER_COXA_ESQ, TRACKER_COXA_DIR):
                 dados[tracker_id]["t"].append(t_rel)
                 dados[tracker_id]["x"].append(x)
                 dados[tracker_id]["y"].append(y)
@@ -456,6 +460,8 @@ def mostrar_feedback():
         p_esq = pos_atual[TORNOZELO_ESQ]
         p_dir = pos_atual[TORNOZELO_DIR]
         p_quad = pos_atual[TRACKER_QUADRIL]
+        p_coxa_e = pos_atual[TRACKER_COXA_ESQ]
+        p_coxa_d = pos_atual[TRACKER_COXA_DIR]
         r_quad = rot_atual[TRACKER_QUADRIL]
         r_coxa_e = rot_atual[TRACKER_COXA_ESQ]
         r_coxa_d = rot_atual[TRACKER_COXA_DIR]
@@ -486,16 +492,21 @@ def mostrar_feedback():
     d_ap, larg_lat = calcular_projecao_anteroposterior(p_esq, p_dir, r_quad, p_quad)
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
-    # 2. Folga Real do Solado ao Chão (Foot Clearance) e Elevação do Tornozelo
-    # Normalização independente do solo calibrado para cada pé (elimina assimetrias estruturais)
-    y_e_norm = p_esq[1] - chao_esq_ref
-    y_d_norm = p_dir[1] - chao_dir_ref
-    # Âncora dinâmica no pé de apoio (imunidade a inclinação do tronco e elevações conjuntas)
-    piso_apoio = min(y_e_norm, y_d_norm)
-
-    # Folga Real da Sola do calçado ao solo (True Foot Clearance - esperado: 1.5 a 4.5 cm)
-    clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
-    clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
+    # 2. Folga Real do Solado com Desacoplamento Pélvico (Imune a Báscula e Inclinação do Quadril)
+    if p_coxa_e is not None and p_coxa_d is not None and L_coxa_pe_e_ref > 0 and L_coxa_pe_d_ref > 0:
+        # Encurtamento vertical de cada perna em relação à sua própria articulação de quadril (coxa)
+        dy_e = L_coxa_pe_e_ref - (p_coxa_e[1] - p_esq[1])
+        dy_d = L_coxa_pe_d_ref - (p_coxa_d[1] - p_dir[1])
+        piso_apoio = min(dy_e, dy_d)
+        clearance_e_raw = max(0.0, (dy_e - piso_apoio) * 100.0)
+        clearance_d_raw = max(0.0, (dy_d - piso_apoio) * 100.0)
+    else:
+        # Fallback cinemático pelo solo calibrado estático
+        y_e_norm = p_esq[1] - chao_esq_ref
+        y_d_norm = p_dir[1] - chao_dir_ref
+        piso_apoio = min(y_e_norm, y_d_norm)
+        clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
+        clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
 
     # Elevação Articular do Tornozelo por Flexão do Joelho (esperado: 10 a 18 cm)
     if p_quad is not None:
@@ -558,7 +569,7 @@ def aplicar_filtro(sinal, frequencia_corte, taxa_amostragem):
     return filtfilt(b, a, sinal)
 
 
-def calcular_sinais_completos(d_esq, d_dir, d_quad):
+def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None):
     """
     Gera as séries temporais determinísticas com Projeção Vetorial Anteroposterior (Seção 3),
     Referencial Pelvino Imune à Inclinação (Eq. 1.3) e Largura da Base de Suporte.
@@ -645,9 +656,23 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
         elev_tornoz_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
         elev_tornoz_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
 
-    # 1. Folga Real do Solado ao Chão (True Foot Clearance - sola do tênis)
-    clearance_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
-    clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
+    # 1. Folga Real do Solado ao Chão (True Foot Clearance com Desacoplamento Pélvico)
+    tem_coxas = (d_coxa_e is not None and d_coxa_d is not None and
+                 len(d_coxa_e.get("t", [])) > 10 and len(d_coxa_d.get("t", [])) > 10 and
+                 len(d_coxa_e.get("y", [])) > 10 and len(d_coxa_d.get("y", [])) > 10 and
+                 L_coxa_pe_e_ref > 0 and L_coxa_pe_d_ref > 0)
+
+    if tem_coxas:
+        y_ce_filt = aplicar_filtro(np.interp(t_comum, np.array(d_coxa_e["t"]), np.array(d_coxa_e["y"])), 5.0, taxa_amostragem)
+        y_cd_filt = aplicar_filtro(np.interp(t_comum, np.array(d_coxa_d["t"]), np.array(d_coxa_d["y"])), 5.0, taxa_amostragem)
+        dy_e = L_coxa_pe_e_ref - (y_ce_filt - y_esq_filt)
+        dy_d = L_coxa_pe_d_ref - (y_cd_filt - y_dir_filt)
+        piso_apoio_c = np.minimum(dy_e, dy_d)
+        clearance_esq = np.maximum(0.0, dy_e - piso_apoio_c) * 100.0
+        clearance_dir = np.maximum(0.0, dy_d - piso_apoio_c) * 100.0
+    else:
+        clearance_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
+        clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
 
     # Aplica zona morta de estabilização contra ruído e tremor no solo
     clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
@@ -1114,6 +1139,7 @@ def executar_calibracao_inicial():
     """
     global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
     global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
+    global L_coxa_pe_e_ref, L_coxa_pe_d_ref
     global tempo_inicial
 
     print("\n" + "=" * 90)
@@ -1165,6 +1191,8 @@ def executar_calibracao_inicial():
     amostras_yq = []
     amostras_de = []
     amostras_dd = []
+    amostras_lce = []
+    amostras_lcd = []
 
     t_fim = time.time() + TEMPO_CALIB_ESTATICA_S
     while time.time() < t_fim and rodando:
@@ -1172,12 +1200,17 @@ def executar_calibracao_inicial():
             pe = pos_atual[TORNOZELO_ESQ]
             pd = pos_atual[TORNOZELO_DIR]
             pq = pos_atual[TRACKER_QUADRIL]
+            pce = pos_atual.get(TRACKER_COXA_ESQ)
+            pcd = pos_atual.get(TRACKER_COXA_DIR)
         if pe is not None and pd is not None and pq is not None:
             amostras_ye.append(pe[1])
             amostras_yd.append(pd[1])
             amostras_yq.append(pq[1])
             amostras_de.append(pq[1] - pe[1])
             amostras_dd.append(pq[1] - pd[1])
+            if pce is not None and pcd is not None:
+                amostras_lce.append(pce[1] - pe[1])
+                amostras_lcd.append(pcd[1] - pd[1])
         time.sleep(0.01)
 
     if len(amostras_de) >= 20 and len(amostras_dd) >= 20:
@@ -1187,6 +1220,10 @@ def executar_calibracao_inicial():
         chao_dir_ref = float(np.median(amostras_yd))
         offset_calib_pernas = 0.0
 
+        if len(amostras_lce) >= 20 and len(amostras_lcd) >= 20:
+            L_coxa_pe_e_ref = float(np.median(amostras_lce))
+            L_coxa_pe_d_ref = float(np.median(amostras_lcd))
+
         # Ruído basal (desvio padrão)
         sigma_e = float(np.std(amostras_ye)) * 100.0
         sigma_d = float(np.std(amostras_yd)) * 100.0
@@ -1195,9 +1232,11 @@ def executar_calibracao_inicial():
         calibrado = True
         print("=" * 90)
         print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
-        print(f"      • Ref. Solo Solo E: {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
-        print(f"      • Ref. Pélvica E  : {dist_qp_e_ref*100:5.1f} cm  |  D : {dist_qp_d_ref*100:5.1f} cm")
-        print(f"      • Zona Morta Solo : {limiar_ruido_chao:5.1f} cm (anti-ruído/tremor)")
+        print(f"      • Ref. Solo E    : {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
+        if L_coxa_pe_e_ref > 0 and L_coxa_pe_d_ref > 0:
+            print(f"      • Comp. Coxa-Pé E: {L_coxa_pe_e_ref*100:5.1f} cm  |  D : {L_coxa_pe_d_ref*100:5.1f} cm (Desacoplamento Pélvico ATIVO)")
+        print(f"      • Ref. Pélvica E : {dist_qp_e_ref*100:5.1f} cm  |  D : {dist_qp_d_ref*100:5.1f} cm")
+        print(f"      • Zona Morta Solo: {limiar_ruido_chao:5.1f} cm (anti-ruído/tremor)")
         print("=" * 90)
     else:
         print("\n[Aviso] Poucas amostras na calibração. Mantendo limiares padrão.")
@@ -1270,13 +1309,15 @@ def main():
         d_esq = dados[TORNOZELO_ESQ]
         d_dir = dados[TORNOZELO_DIR]
         d_quad = dados[TRACKER_QUADRIL]
+        d_coxa_e = dados[TRACKER_COXA_ESQ]
+        d_coxa_d = dados[TRACKER_COXA_DIR]
 
         if len(d_esq["t"]) < 20 or len(d_dir["t"]) < 20:
             print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
             return
 
         t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
-            d_esq, d_dir, d_quad
+            d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
         )
 
         tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
