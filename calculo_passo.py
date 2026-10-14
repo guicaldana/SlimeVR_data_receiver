@@ -411,9 +411,10 @@ def classificar_estado_usuario(p_esq, p_dir, p_quad, rot_coxa_e, rot_coxa_d, a_e
     Classifica Postura e Movimento com Nível Dinâmico do Solo e Referencial Pelvino.
     """
     # Nível Dinâmico do Solo equalizado com a calibração estática
-    y_e_corr = p_esq[1]
-    y_d_corr = p_dir[1] - offset_calib_pernas
-    chao_instantaneo = min(y_e_corr, y_d_corr)
+    if calibrado:
+        chao_instantaneo = (chao_esq_ref + chao_dir_ref) / 2.0
+    else:
+        chao_instantaneo = min(p_esq[1], p_dir[1])
 
     # 1. Postura (EM PÉ vs SENTADO)
     if p_quad is not None:
@@ -486,19 +487,26 @@ def mostrar_feedback():
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
     # 2. Folga Real do Solado ao Chão (Foot Clearance) e Elevação do Tornozelo
-    chao_dinamico_inst = min(p_esq[1], p_dir[1] - offset_calib_pernas)
+    # Normalização independente do solo calibrado para cada pé (elimina assimetrias estruturais)
+    y_e_norm = p_esq[1] - chao_esq_ref
+    y_d_norm = p_dir[1] - chao_dir_ref
+    piso_apoio = min(0.0, y_e_norm, y_d_norm)
 
     # Folga Real da Sola do calçado ao solo (True Foot Clearance - esperado: 1.5 a 4.5 cm)
-    clearance_e_raw = max(0.0, (p_esq[1] - chao_dinamico_inst) * 100.0)
-    clearance_d_raw = max(0.0, ((p_dir[1] - offset_calib_pernas) - chao_dinamico_inst) * 100.0)
+    clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
+    clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
 
     # Elevação Articular do Tornozelo por Flexão do Joelho (esperado: 10 a 18 cm)
     if p_quad is not None:
-        dist_qp_e = p_quad[1] - p_esq[1]
-        dist_qp_d = (p_quad[1] - p_dir[1]) + offset_calib_pernas
-        l_apoio = max(dist_qp_e, dist_qp_d)
-        tornoz_e_raw = max(0.0, (l_apoio - dist_qp_e) * 100.0)
-        tornoz_d_raw = max(0.0, (l_apoio - dist_qp_d) * 100.0)
+        if calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
+            tornoz_e_raw = max(0.0, (dist_qp_e_ref - (p_quad[1] - p_esq[1])) * 100.0)
+            tornoz_d_raw = max(0.0, (dist_qp_d_ref - (p_quad[1] - p_dir[1])) * 100.0)
+        else:
+            dist_qp_e = p_quad[1] - p_esq[1]
+            dist_qp_d = p_quad[1] - p_dir[1]
+            l_apoio = max(dist_qp_e, dist_qp_d)
+            tornoz_e_raw = max(0.0, (l_apoio - dist_qp_e) * 100.0)
+            tornoz_d_raw = max(0.0, (l_apoio - dist_qp_d) * 100.0)
     else:
         tornoz_e_raw = clearance_e_raw
         tornoz_d_raw = clearance_d_raw
@@ -572,9 +580,10 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
     y_esq_filt = aplicar_filtro(np.interp(t_comum, t_esq, y_esq), 5.0, taxa_amostragem)
     y_dir_filt = aplicar_filtro(np.interp(t_comum, t_dir, y_dir), 5.0, taxa_amostragem)
 
-    # Nível do solo equalizado com calibração estática
-    y_esq_corr = y_esq_filt
-    y_dir_corr = y_dir_filt - offset_calib_pernas
+    # Normalização independente de solo calibrado para cada pé (elimina assimetrias estruturais)
+    y_e_norm = y_esq_filt - chao_esq_ref
+    y_d_norm = y_dir_filt - chao_dir_ref
+    piso_apoio = np.minimum(0.0, np.minimum(y_e_norm, y_d_norm))
 
     # 1. Projeção Vetorial Anteroposterior com o Vetor de Direção do Quadril (Seção 3)
     dx = x_esq_i - x_dir_i
@@ -612,29 +621,32 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad):
     largura_base_m = np.abs(dx * fz - dz * fx)
 
     # 2. Piso Dinâmico de Apoio e Referencial Pelvino (Eq. 1.2 e 1.3)
-    chao_dinamico = np.minimum(y_esq_corr, y_dir_corr)
-
     if tem_quad:
         t_quad = np.array(d_quad["t"])
         y_quad = np.array(d_quad["y"])
         y_quad_filt = aplicar_filtro(np.interp(t_comum, t_quad, y_quad), 5.0, taxa_amostragem)
-        alt_quadril = (y_quad_filt - chao_dinamico) * 100.0
+        chao_medio = (chao_esq_ref + chao_dir_ref) / 2.0 if calibrado else np.minimum(y_esq_filt, y_dir_filt)
+        alt_quadril = (y_quad_filt - chao_medio) * 100.0
         posturas = np.where(alt_quadril >= (LIMIAR_QUADRIL_EM_PE * 100), "EM PÉ", "SENTADO")
 
-        dist_qp_e = y_quad_filt - y_esq_filt
-        dist_qp_d = (y_quad_filt - y_dir_filt) + offset_calib_pernas
-        l_apoio = np.maximum(dist_qp_e, dist_qp_d)
-        elev_tornoz_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
-        elev_tornoz_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
+        if calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
+            elev_tornoz_esq = np.maximum(0.0, dist_qp_e_ref - (y_quad_filt - y_esq_filt)) * 100.0
+            elev_tornoz_dir = np.maximum(0.0, dist_qp_d_ref - (y_quad_filt - y_dir_filt)) * 100.0
+        else:
+            dist_qp_e = y_quad_filt - y_esq_filt
+            dist_qp_d = y_quad_filt - y_dir_filt
+            l_apoio = np.maximum(dist_qp_e, dist_qp_d)
+            elev_tornoz_esq = np.maximum(0.0, l_apoio - dist_qp_e) * 100.0
+            elev_tornoz_dir = np.maximum(0.0, l_apoio - dist_qp_d) * 100.0
     else:
         alt_quadril = np.full_like(t_comum, 90.0)
         posturas = np.full_like(t_comum, "EM PÉ", dtype=object)
-        elev_tornoz_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
-        elev_tornoz_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
+        elev_tornoz_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
+        elev_tornoz_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
 
     # 1. Folga Real do Solado ao Chão (True Foot Clearance - sola do tênis)
-    clearance_esq = np.maximum(0.0, y_esq_corr - chao_dinamico) * 100.0
-    clearance_dir = np.maximum(0.0, y_dir_corr - chao_dinamico) * 100.0
+    clearance_esq = np.maximum(0.0, y_e_norm - piso_apoio) * 100.0
+    clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
 
     # Aplica zona morta de estabilização contra ruído e tremor no solo
     clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
@@ -1172,9 +1184,7 @@ def executar_calibracao_inicial():
         dist_qp_d_ref = float(np.median(amostras_dd))
         chao_esq_ref = float(np.median(amostras_ye))
         chao_dir_ref = float(np.median(amostras_yd))
-
-        # Equaliza perfeitamente o offset de montagem dos trackers nos cadarços
-        offset_calib_pernas = dist_qp_e_ref - dist_qp_d_ref
+        offset_calib_pernas = 0.0
 
         # Ruído basal (desvio padrão)
         sigma_e = float(np.std(amostras_ye)) * 100.0
@@ -1184,9 +1194,9 @@ def executar_calibracao_inicial():
         calibrado = True
         print("=" * 90)
         print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
-        print(f"      • Ref. Pélvica E : {dist_qp_e_ref*100:5.1f} cm  |  D : {dist_qp_d_ref*100:5.1f} cm")
-        print(f"      • Offset Pés     : {offset_calib_pernas*100:+5.1f} cm (ambos nivelados a 0.0 mm)")
-        print(f"      • Zona Morta Solo: {limiar_ruido_chao:5.1f} cm (anti-ruído/tremor)")
+        print(f"      • Ref. Solo Solo E: {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
+        print(f"      • Ref. Pélvica E  : {dist_qp_e_ref*100:5.1f} cm  |  D : {dist_qp_d_ref*100:5.1f} cm")
+        print(f"      • Zona Morta Solo : {limiar_ruido_chao:5.1f} cm (anti-ruído/tremor)")
         print("=" * 90)
     else:
         print("\n[Aviso] Poucas amostras na calibração. Mantendo limiares padrão.")
