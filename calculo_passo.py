@@ -80,6 +80,11 @@ TEMPO_CALIB_ESTATICA_S = 3.0  # 3 segundos de amostragem estática com ambos os 
 # True = altura da pelve congelada na calibração; False = pelve acompanha o tracker em tempo real
 PELVE_FIXA = True
 
+# Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
+CALIBRAR_CAIXA = True
+ALTURA_CAIXA_CM = 7.0
+TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
+
 # Arquivos de saída
 os.makedirs("dados", exist_ok=True)
 NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
@@ -171,6 +176,8 @@ offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pé
 chao_esq_ref = 0.0
 chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
+ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
+ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -512,6 +519,10 @@ def mostrar_feedback():
         clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
         clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
 
+    # Ganho por pé calibrado com a caixa de altura conhecida
+    clearance_e_raw *= ganho_esq
+    clearance_d_raw *= ganho_dir
+
     tornoz_e_raw = clearance_e_raw
     tornoz_d_raw = clearance_d_raw
 
@@ -656,6 +667,12 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
         clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
         elev_tornoz_esq = clearance_esq
         elev_tornoz_dir = clearance_dir
+
+    # Ganho por pé calibrado com a caixa de altura conhecida
+    clearance_esq = clearance_esq * ganho_esq
+    clearance_dir = clearance_dir * ganho_dir
+    elev_tornoz_esq = clearance_esq.copy()
+    elev_tornoz_dir = clearance_dir.copy()
 
     # Aplica zona morta de estabilização contra ruído e tremor no solo
     clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
@@ -1114,6 +1131,61 @@ def rodar_servidor(porta, handler):
         print(f"\n[AVISO] Erro na porta {porta}: {e}")
 
 
+def _clearance_bruto_cm(p_esq, p_dir, p_quad):
+    """Folga bruta (cm) de cada pé, sem ganho, com a mesma fórmula do feedback ao vivo."""
+    if p_quad is not None and calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
+        yq_uso = yq_ref if PELVE_FIXA else p_quad[1]
+        h_e = dist_qp_e_ref - (yq_uso - p_esq[1])
+        h_d = dist_qp_d_ref - (yq_uso - p_dir[1])
+    else:
+        h_e = p_esq[1] - chao_esq_ref
+        h_d = p_dir[1] - chao_dir_ref
+    piso = min(h_e, h_d)
+    return max(0.0, (h_e - piso) * 100.0), max(0.0, (h_d - piso) * 100.0)
+
+
+def calibrar_ganho_caixa():
+    """Pede para pisar na caixa com cada pé e calcula o fator de escala por pé."""
+    global ganho_esq, ganho_dir
+    print("\n" + "=" * 90)
+    print(f"   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM CAIXA DE {ALTURA_CAIXA_CM:.1f} CM")
+    print("=" * 90)
+
+    resultados = {}
+    for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
+        print(f"\n👉 Coloque o pé {lado} em cima da caixa (o outro pé fica no chão) e fique parado.")
+        for cont in (5, 4, 3, 2, 1):
+            print(f"    Amostragem em {cont}s...   ", end="\r", flush=True)
+            time.sleep(1.0)
+        print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
+
+        amostras = []
+        t_fim = time.time() + TEMPO_CAIXA_S
+        while time.time() < t_fim and rodando:
+            with lock:
+                pe = pos_atual[TORNOZELO_ESQ]
+                pd = pos_atual[TORNOZELO_DIR]
+                pq = pos_atual[TRACKER_QUADRIL]
+            if pe is not None and pd is not None:
+                amostras.append(_clearance_bruto_cm(pe, pd, pq)[idx])
+            time.sleep(0.01)
+
+        medido = float(np.median(amostras)) if amostras else 0.0
+        if medido < 2.0:
+            print(f"    [Aviso] Pé {lado}: só {medido:.1f} cm medidos. Ganho mantido em 1.0.")
+            ganho = 1.0
+        else:
+            ganho = max(0.4, min(2.5, ALTURA_CAIXA_CM / medido))
+            print(f"    Pé {lado}: medido {medido:.1f} cm -> ganho {ganho:.3f}")
+        resultados[idx] = ganho
+        print("    Volte o pé para o chão.")
+        time.sleep(2.0)
+
+    ganho_esq, ganho_dir = resultados[0], resultados[1]
+    print(f"\n  [✓] Ganhos: ESQ={ganho_esq:.3f} | DIR={ganho_dir:.3f}")
+    print("=" * 90)
+
+
 def executar_calibracao_inicial():
     """
     Executa a calibração estática inicial com os dois pés apoiados no chão.
@@ -1224,6 +1296,9 @@ def executar_calibracao_inicial():
         print("=" * 90)
     else:
         print("\n[Aviso] Poucas amostras na calibração. Mantendo limiares padrão.")
+
+    if calibrado and CALIBRAR_CAIXA:
+        calibrar_ganho_caixa()
 
     # 3. Zera os dados anteriores para que o teste de marcha comece limpo a partir de agora
     with lock:
