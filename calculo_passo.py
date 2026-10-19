@@ -91,6 +91,9 @@ PELVE_FIXA = True
 MODO_ALTURA = "pipeline"
 TRONCO_RETO_GRAUS = 10.0       # até aqui só OSC (modo "pipeline")
 TRONCO_INCLINADO_GRAUS = 30.0  # a partir daqui só cadeia; entre os dois, transição linear
+# Na análise final, a escala da cadeia é ajustada para medir a mesma altura de passo
+# que o OSC na caminhada com o tronco reto (etapa "caminhada_reta" do roteiro).
+CADEIA_ESCALA_NA_MARCHA = True
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
@@ -225,6 +228,7 @@ ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado
 ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
 # No modo "pipeline", cada método tem o seu ganho por pé: {"osc": (E, D), "cadeia": (E, D)}
 ganhos_metodo = {"osc": (1.0, 1.0), "cadeia": (1.0, 1.0)}
+ganhos_cadeia_caixa = []         # ganho da cadeia na caixa, antes do ajuste pela marcha
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -640,6 +644,49 @@ def alturas_cadeia_serie(t_comum, taxa_amostragem):
     return e * 100.0, d * 100.0
 
 
+def _picos_balanco(x, minimo=1.5, fim=0.5):
+    """Altura máxima de cada balanço (trecho em que o pé sai do chão)."""
+    picos, i, n = [], 0, len(x)
+    while i < n:
+        if x[i] > minimo:
+            j = i
+            while j < n and x[j] > fim:
+                j += 1
+            picos.append(float(np.max(x[i:j])))
+            i = j
+        else:
+            i += 1
+    return picos
+
+
+def escalar_cadeia_pela_marcha(t, osc_e, osc_d, cad_e, cad_d, pitch_serie):
+    """Ajusta o ganho da cadeia para que, na caminhada com o tronco reto, ela meça
+    a mesma altura de passo que o OSC (já com o ganho da caixa). Assim a troca do
+    pipeline não muda a escala da medida no meio da caminhada."""
+    janela = None
+    for nome, t0, t1 in fases_sessao:
+        if nome == "caminhada_reta":
+            janela = (t >= t0) & (t <= t1)
+    if janela is None:
+        # Sem roteiro: usa todos os trechos com o tronco reto
+        if pitch_serie is None:
+            return
+        janela = peso_cadeia(pitch_serie) <= 0.0
+    go = ganhos_metodo["osc"]
+    novos = list(ganhos_metodo["cadeia"])
+    for i, (o, c) in enumerate(((osc_e, cad_e), (osc_d, cad_d))):
+        po = _picos_balanco(o[janela] * go[i])
+        pc = _picos_balanco(c[janela])
+        if len(po) < 3 or len(pc) < 3 or np.median(pc) <= 0:
+            continue
+        novos[i] = float(np.clip(np.median(po) / np.median(pc), 0.2, 3.0))
+    print(f"      • Ganho da cadeia na marcha: E {novos[0]:.2f} | D {novos[1]:.2f} "
+          f"(caixa: E {ganhos_metodo['cadeia'][0]:.2f} | D {ganhos_metodo['cadeia'][1]:.2f})")
+    if not ganhos_cadeia_caixa:
+        ganhos_cadeia_caixa[:] = list(ganhos_metodo["cadeia"])
+    ganhos_metodo["cadeia"] = tuple(novos)
+
+
 def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None):
     """
     Gera as séries temporais determinísticas com Projeção Vetorial Anteroposterior (Seção 3),
@@ -743,6 +790,8 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
     if len(d_peito["t"]) > 10:
         pitch_serie = np.interp(t_comum, np.array(d_peito["t"]), np.array(d_peito["pitch"]))
     osc_e_bruto, osc_d_bruto = clearance_esq.copy(), clearance_dir.copy()
+    if MODO_ALTURA == "pipeline" and CADEIA_ESCALA_NA_MARCHA and cad_e is not None:
+        escalar_cadeia_pela_marcha(t_comum, osc_e_bruto, osc_d_bruto, cad_e, cad_d, pitch_serie)
     clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d, pitch_serie)
     serie_altura.clear()
     serie_altura.update({
@@ -1567,6 +1616,7 @@ def salvar_dados_brutos():
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
             "fases": [list(f) for f in fases_sessao],
+            "ganhos_cadeia_caixa": list(ganhos_cadeia_caixa),
             "calibracao": {
                 "dist_qp_e_ref": dist_qp_e_ref, "dist_qp_d_ref": dist_qp_d_ref, "yq_ref": yq_ref,
                 "chao_esq_ref": chao_esq_ref, "chao_dir_ref": chao_dir_ref,
