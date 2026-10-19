@@ -82,11 +82,15 @@ TEMPO_CALIB_ESTATICA_S = 3.0  # 3 segundos de amostragem estática com ambos os 
 PELVE_FIXA = True
 
 # Como medir a altura do pé:
-#   "osc"    = diferença de altura entre os pés no OSC (sobe junto com o tronco, mas os dois pés sobem igual)
-#   "cadeia" = cadeia de transformações das pernas (coxa e canela do SolarXR, sem tronco)
-#   "mescla" = média das duas
+#   "osc"      = diferença de altura entre os pés no OSC (sobe junto com o tronco, mas os dois pés sobem igual)
+#   "cadeia"   = cadeia de transformações das pernas (coxa e canela do SolarXR, sem tronco)
+#   "mescla"   = média das duas
+#   "pipeline" = OSC com o tronco reto; conforme o tronco inclina, passa para a cadeia.
+#                Cada método recebe o seu próprio ganho na calibração da caixa.
 # A aceleração das IMUs continua servindo só para o tempo dos passos (heel-strike).
-MODO_ALTURA = "mescla"
+MODO_ALTURA = "pipeline"
+TRONCO_RETO_GRAUS = 10.0       # até aqui só OSC (modo "pipeline")
+TRONCO_INCLINADO_GRAUS = 30.0  # a partir daqui só cadeia; entre os dois, transição linear
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
@@ -191,6 +195,8 @@ chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
 ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
 ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
+# No modo "pipeline", cada método tem o seu ganho por pé: {"osc": (E, D), "cadeia": (E, D)}
+ganhos_metodo = {"osc": (1.0, 1.0), "cadeia": (1.0, 1.0)}
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -533,7 +539,7 @@ def mostrar_feedback():
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
     # 2. Altura de cada pé acima do outro (OSC, cadeia das pernas ou mescla: MODO_ALTURA)
-    clearance_e_raw, clearance_d_raw = _clearance_bruto_cm(p_esq, p_dir, p_quad, quats)
+    clearance_e_raw, clearance_d_raw = _clearance_bruto_cm(p_esq, p_dir, p_quad, quats, p_peito)
 
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_e_raw *= ganho_esq
@@ -702,7 +708,11 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
 
     # Cadeia das pernas (SolarXR) e mescla com o OSC, conforme MODO_ALTURA
     cad_e, cad_d = alturas_cadeia_serie(t_comum, taxa_amostragem)
-    clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d)
+    pitch_serie = None
+    d_peito = dados[TRACKER_PEITO]
+    if len(d_peito["t"]) > 10:
+        pitch_serie = np.interp(t_comum, np.array(d_peito["t"]), np.array(d_peito["pitch"]))
+    clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d, pitch_serie)
 
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_esq = clearance_esq * ganho_esq
@@ -1176,22 +1186,38 @@ def _clearance_cadeia_cm(quats):
     return float(e[0]) * 100.0, float(d[0]) * 100.0
 
 
-def combinar_alturas(osc_e, osc_d, cad_e, cad_d):
+def peso_cadeia(pitch_tronco):
+    """Peso da cadeia no modo "pipeline": 0 com o tronco reto, 1 com o tronco inclinado."""
+    if pitch_tronco is None:
+        return 0.0
+    faixa = max(1e-6, TRONCO_INCLINADO_GRAUS - TRONCO_RETO_GRAUS)
+    return np.clip((np.abs(pitch_tronco) - TRONCO_RETO_GRAUS) / faixa, 0.0, 1.0)
+
+
+def combinar_alturas(osc_e, osc_d, cad_e, cad_d, pitch_tronco=None):
     """Junta as alturas do OSC e da cadeia conforme MODO_ALTURA (aceita escalares ou arrays)."""
     if cad_e is None or MODO_ALTURA == "osc":
+        if MODO_ALTURA == "pipeline":
+            g = ganhos_metodo["osc"]
+            return osc_e * g[0], osc_d * g[1]
         return osc_e, osc_d
     if MODO_ALTURA == "cadeia":
         return cad_e, cad_d
+    if MODO_ALTURA == "pipeline":
+        go, gc = ganhos_metodo["osc"], ganhos_metodo["cadeia"]
+        w = peso_cadeia(pitch_tronco)
+        return ((1.0 - w) * osc_e * go[0] + w * cad_e * gc[0],
+                (1.0 - w) * osc_d * go[1] + w * cad_d * gc[1])
     return (osc_e + cad_e) / 2.0, (osc_d + cad_d) / 2.0
 
 
-def _clearance_bruto_cm(p_esq, p_dir, p_quad, quats=None):
-    """Folga bruta (cm) de cada pé, sem ganho, no modo MODO_ALTURA."""
+def _clearance_bruto_cm(p_esq, p_dir, p_quad, quats=None, pitch_tronco=None):
+    """Folga bruta (cm) de cada pé no modo MODO_ALTURA (sem o ganho global da caixa)."""
     osc_e, osc_d = _clearance_osc_cm(p_esq, p_dir, p_quad)
     cad = _clearance_cadeia_cm(quats if quats is not None else quat_atual)
     if cad is None:
-        return osc_e, osc_d
-    return combinar_alturas(osc_e, osc_d, cad[0], cad[1])
+        return combinar_alturas(osc_e, osc_d, None, None, pitch_tronco)
+    return combinar_alturas(osc_e, osc_d, cad[0], cad[1], pitch_tronco)
 
 
 def _clearance_osc_cm(p_esq, p_dir, p_quad):
@@ -1209,7 +1235,7 @@ def _clearance_osc_cm(p_esq, p_dir, p_quad):
 
 def calibrar_ganho_caixa():
     """Pede para pisar na caixa com cada pé e calcula o fator de escala por pé."""
-    global ganho_esq, ganho_dir
+    global ganho_esq, ganho_dir, ganhos_metodo
     print("\n" + "=" * 90)
     print(f"   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM CAIXA DE {ALTURA_CAIXA_CM:.1f} CM")
     print("=" * 90)
@@ -1223,6 +1249,7 @@ def calibrar_ganho_caixa():
         print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
 
         amostras = []
+        amostras_osc, amostras_cad = [], []
         t_fim = time.time() + TEMPO_CAIXA_S
         while time.time() < t_fim and rodando:
             with lock:
@@ -1232,7 +1259,25 @@ def calibrar_ganho_caixa():
                 qs = dict(quat_atual)
             if pe is not None and pd is not None:
                 amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
+                amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
+                cad = _clearance_cadeia_cm(qs)
+                if cad is not None:
+                    amostras_cad.append(cad[idx])
             time.sleep(0.01)
+
+        if MODO_ALTURA == "pipeline":
+            # Ganho próprio de cada método; o ganho global fica em 1
+            for metodo, amo in (("osc", amostras_osc), ("cadeia", amostras_cad)):
+                med = float(np.median(amo)) if amo else 0.0
+                g = max(0.4, min(2.5, ALTURA_CAIXA_CM / med)) if med >= 2.0 else 1.0
+                atual = list(ganhos_metodo[metodo])
+                atual[idx] = g
+                ganhos_metodo[metodo] = tuple(atual)
+                print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm -> ganho {g:.3f}")
+            resultados[idx] = 1.0
+            print("    Volte o pé para o chão.")
+            time.sleep(2.0)
+            continue
 
         medido = float(np.median(amostras)) if amostras else 0.0
         if medido < 2.0:

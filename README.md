@@ -130,9 +130,10 @@ Reconstrói as pernas a partir da calibração parada: para cada coxa e canela, 
 No `calculo_passo.py`, a opção `MODO_ALTURA` escolhe a medida de altura:
 - `"osc"`: diferença entre os pés no OSC (método anterior);
 - `"cadeia"`: cadeia das pernas;
-- `"mescla"` (padrão): média das duas.
+- `"mescla"`: média simples das duas;
+- `"pipeline"` (padrão): troca pela inclinação do tronco (tracker do peito). Com o tronco até `TRONCO_RETO_GRAUS` (10°) usa o OSC; a partir de `TRONCO_INCLINADO_GRAUS` (30°) usa a cadeia; entre os dois, passa de um para o outro aos poucos. Cada método tem o seu próprio ganho, aprendido na calibração da caixa (`ganhos_metodo`).
 
-A aceleração das IMUs continua sendo usada só para o tempo dos passos (heel-strike). Na gravação de 19/10 (tronco a ~3°, ~23° e ~40°), o erro médio na caixa de 6,7 cm foi de 0,62 cm pelo OSC, 1,08 cm pela cadeia e 0,60 cm pela mescla. Com os pés no chão, a cadeia variou menos de 1 cm com o tronco a 40°, enquanto o OSC "subiu" 14,5 cm. O `experimento_inclinacao.py` mostra as três colunas para comparar.
+A aceleração das IMUs continua sendo usada só para o tempo dos passos (heel-strike). Na gravação de 19/10 (tronco a ~3°, ~23° e ~40°), com o ganho da caixa calibrado com o tronco reto, o erro médio por subida na caixa de 6,7 cm foi de 0,67 cm pelo OSC, 0,81 cm pela cadeia e 0,58 cm pelo pipeline. Com os pés no chão, a cadeia variou menos de 1 cm com o tronco a 40°, enquanto o OSC "subiu" 14,5 cm. O `experimento_inclinacao.py` mostra as colunas para comparar.
 
 ---
 
