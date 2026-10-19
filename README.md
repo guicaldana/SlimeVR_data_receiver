@@ -104,8 +104,12 @@ uv run python zupt_pe.py slimevr_client_raw/captures/SESSAO/samples.csv --csv da
 **Experimento (`experimento_inclinacao.py`):** grava OSC e SolarXR ao mesmo tempo e guia o roteiro pelo terminal. Antes de rodar, abra o SlimeVR Server com o OSC ligado (porta 9000) e deixe a caixa de 6,7 cm ao lado dos pés. Também deixe uns 5 m livres para caminhar em linha reta.
 1. Parado, tronco reto (5 s).
 2. Caminhada reta, que serve para calibrar a montagem (12 s).
-3. Para o tronco a 0°, 30° e 60°: incline e fique parado (5 s). Depois, mantendo a inclinação, coloque o pé esquerdo na caixa (5 s), volte ao chão (4 s), coloque o pé direito na caixa (5 s), volte ao chão (4 s), e repita.
-4. Caminhada reta com o tronco inclinado (12 s).
+3. Pausa para ir até a caixa (15 s).
+4. Para o tronco a 0°, 30° e 60°: incline e fique parado (5 s). Depois, mantendo a inclinação, coloque o pé esquerdo na caixa (5 s), volte ao chão (4 s), coloque o pé direito na caixa (5 s), volte ao chão (4 s), e repita.
+5. Pausa para voltar ao início da caminhada (15 s).
+6. Caminhada reta com o tronco inclinado (12 s).
+
+A duração das fases fica no topo de `experimento_inclinacao.py` (`T_DESLOCAMENTO_S`, `T_CAMINHADA_S` etc.).
 
 ```powershell
 uv run python experimento_inclinacao.py

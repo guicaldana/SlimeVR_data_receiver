@@ -61,6 +61,7 @@ T_CAMINHADA_S = 12.0
 T_INCLINAR_S = 5.0
 T_SUBIR_S = 5.0          # pé parado em cima da caixa
 T_DESCER_S = 4.0         # pé parado de volta no chão
+T_DESLOCAMENTO_S = 15.0  # pausa para ir até a caixa ou até o início da caminhada
 PASTA_EXPERIMENTOS = os.path.join("dados", "experimentos")
 CLIENTE_SOLARXR = os.path.join("slimevr_client_raw", "src", "cli.mjs")
 # ==============================================================
@@ -88,6 +89,7 @@ def montar_roteiro():
     fases = [
         ("parado_reto", T_PARADO_S, "Fique parado, tronco reto, os dois pés no chão.", 0),
         ("caminhada_reta", T_CAMINHADA_S, "Caminhe em linha reta, ritmo normal, tronco reto. Pare no fim.", 0),
+        ("deslocamento_caixa", T_DESLOCAMENTO_S, "PAUSA: vá até a caixa e fique em pé ao lado dela.", 0),
     ]
     for inc in INCLINACOES:
         fases.append((f"inclinado_{inc}", T_INCLINAR_S,
@@ -98,6 +100,8 @@ def montar_roteiro():
                               f"[{inc}°] Pé {nomes[pe]} em cima da caixa e parado ({k}/{REPETICOES_CAIXA}).", inc))
                 fases.append((f"descer_{inc}_{pe}_{k}", T_DESCER_S,
                               f"[{inc}°] Pé {nomes[pe]} de volta ao chão e parado.", inc))
+    fases.append(("deslocamento_caminhada", T_DESLOCAMENTO_S,
+                  "PAUSA: vá até o início da caminhada e fique parado.", 0))
     fases.append(("caminhada_inclinada", T_CAMINHADA_S,
                   "Caminhe em linha reta com o tronco inclinado ~30°. Pare no fim.", 30))
     return fases
