@@ -133,6 +133,8 @@ No `calculo_passo.py`, a opção `MODO_ALTURA` escolhe a medida de altura:
 - `"mescla"`: média simples das duas;
 - `"pipeline"` (padrão): troca pela inclinação do tronco (tracker do peito). Com o tronco até `TRONCO_RETO_GRAUS` (10°) usa o OSC; a partir de `TRONCO_INCLINADO_GRAUS` (30°) usa a cadeia; entre os dois, passa de um para o outro aos poucos. Cada método tem o seu próprio ganho, aprendido na calibração da caixa (`ganhos_metodo`).
 
+**Roteiro guiado no `calculo_passo.py`:** com `ROTEIRO_GUIADO = True` (padrão), depois das calibrações o programa conduz as etapas da lista `ROTEIRO`, cada uma com tempo fixo e aviso sonoro na troca: ir ao início (10 s), caminhada reta (15 s), voltar (15 s), caminhada inclinada (15 s), ir até a caixa (15 s), pé E e pé D na caixa com o tronco reto (5 s cada, 4 s no chão entre eles), inclinar (5 s) e pé E e pé D na caixa inclinado. São 111 s no total, e a gravação encerra sozinha no fim. Ao final ficam salvos `dados/fases_sessao.csv` (início e fim de cada etapa), `dados/dados_brutos_sessao.csv` (altura de cada pé a cada instante, com OSC, cadeia, inclinação e peso da cadeia) e `dados/dados_brutos_entrada.json` (entradas e calibração, para reprocessar).
+
 A aceleração das IMUs continua sendo usada só para o tempo dos passos (heel-strike). Na gravação de 19/10 (tronco a ~3°, ~23° e ~40°), com o ganho da caixa calibrado com o tronco reto, o erro médio por subida na caixa de 6,7 cm foi de 0,67 cm pelo OSC, 0,81 cm pela cadeia e 0,58 cm pelo pipeline. Com os pés no chão, a cadeia variou menos de 1 cm com o tronco a 40°, enquanto o OSC "subiu" 14,5 cm. O `experimento_inclinacao.py` mostra as colunas para comparar.
 
 ---

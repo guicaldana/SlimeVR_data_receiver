@@ -97,11 +97,33 @@ CALIBRAR_CAIXA = True
 ALTURA_CAIXA_CM = 6.7
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 
+# Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
+# Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
+# (nome da etapa, segundos, instrução)
+ROTEIRO_GUIADO = True
+ROTEIRO = [
+    ("ir_inicio",           10, "Vá até o início da caminhada e fique parado"),
+    ("caminhada_reta",      15, "CAMINHE normalmente, com o tronco RETO"),
+    ("voltar_inicio",       15, "Volte ao início e prepare-se para caminhar inclinado"),
+    ("caminhada_inclinada", 15, "CAMINHE com o tronco INCLINADO para a frente (mais de 30°)"),
+    ("ir_caixa",            15, "Vá até a caixa e fique com os dois pés no chão, tronco reto"),
+    ("caixa_reto_ESQ",       5, "Pé ESQUERDO em cima da caixa, tronco RETO"),
+    ("chao_1",               4, "Pé de volta ao chão"),
+    ("caixa_reto_DIR",       5, "Pé DIREITO em cima da caixa, tronco RETO"),
+    ("chao_2",               4, "Pé de volta ao chão"),
+    ("inclinar",             5, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
+    ("caixa_incl_ESQ",       5, "Pé ESQUERDO em cima da caixa, tronco INCLINADO"),
+    ("chao_3",               4, "Pé de volta ao chão, continue inclinado"),
+    ("caixa_incl_DIR",       5, "Pé DIREITO em cima da caixa, tronco INCLINADO"),
+    ("chao_4",               4, "Pé de volta ao chão. Pode endireitar o tronco"),
+]
+
 # Arquivos de saída
 os.makedirs("dados", exist_ok=True)
 NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
 NOME_ARQUIVO_BRUTO = os.path.join("dados", "dados_brutos_sessao.csv")
 NOME_ARQUIVO_ENTRADA = os.path.join("dados", "dados_brutos_entrada.json")
+NOME_ARQUIVO_FASES = os.path.join("dados", "fases_sessao.csv")
 INTERVALO_FEEDBACK = 0.20     # Atualização do terminal 5 vezes por segundo
 # ==============================================================
 
@@ -195,6 +217,9 @@ chao_esq_ref = 0.0
 chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
 pitch_tronco_ref = 0.0           # Inclinação natural do peito na calibração (graus)
+fases_sessao = []                # (etapa, t0, t1) do roteiro guiado, no tempo da gravação
+etapa_atual = ""                 # texto curto mostrado na linha de feedback
+roteiro_terminou = False
 serie_altura = {}                # Série completa da altura (preenchida em calcular_sinais_completos)
 ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
 ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
@@ -583,6 +608,8 @@ def mostrar_feedback():
     str_trc = f" | Trc:{p_peito:+4.0f}°" if p_peito is not None else ""
     str_imu = f" | IMU:{ult_imp}" if (a_e > 0 or a_d > 0) else ""
 
+    if etapa_atual:
+        str_calib = f"{str_calib} | {etapa_atual}"
     print(f"\r  ⏱ {tempo:4.1f}s | {str_estado:<21} | {str_passo} ({str_base}) | {str_alt}{str_quad}{str_trc}{str_imu}{str_calib}  ", end="", flush=True)
 
 
@@ -1467,7 +1494,56 @@ def executar_calibracao_inicial():
             dados[t_id] = {k: [] for k in dados[t_id]}
         for l in dados_imu:
             dados_imu[l] = {k: [] for k in dados_imu[l]}
+        for seg in dados_quat:
+            dados_quat[seg] = {"t": [], "q": []}
         tempo_inicial = time.time()
+
+
+def _aviso_sonoro(vezes=1):
+    try:
+        import winsound
+        for _ in range(vezes):
+            winsound.Beep(880, 180)
+    except Exception:
+        print("\a" * vezes, end="", flush=True)
+
+
+def executar_roteiro():
+    """Conduz as etapas do ROTEIRO com tempo fixo e guarda o início e o fim de cada uma."""
+    global etapa_atual, roteiro_terminou
+    total = sum(seg for _, seg, _ in ROTEIRO)
+    print(f"\n   📋 Roteiro guiado: {len(ROTEIRO)} etapas, {total:.0f} s no total.\n")
+    for i, (nome, segundos, instrucao) in enumerate(ROTEIRO):
+        if not rodando:
+            return
+        proxima = ROTEIRO[i + 1][2] if i + 1 < len(ROTEIRO) else "fim da gravação"
+        print(f"\n\n   ▶ [{i + 1}/{len(ROTEIRO)}] {instrucao}  ({segundos:.0f} s)")
+        print(f"     depois: {proxima}\n")
+        _aviso_sonoro(2 if nome.startswith(("caminhada", "caixa", "inclinar")) else 1)
+        t0 = time.time() - tempo_inicial
+        fim = time.time() + segundos
+        while rodando and time.time() < fim:
+            etapa_atual = f"{nome} {fim - time.time():4.1f}s"
+            time.sleep(0.05)
+        fases_sessao.append((nome, t0, time.time() - tempo_inicial))
+    etapa_atual = ""
+    _aviso_sonoro(3)
+    print("\n\n   ✅ Roteiro concluído. Encerrando a gravação...")
+    roteiro_terminou = True
+
+
+def salvar_fases():
+    if not fases_sessao:
+        return
+    try:
+        with open(NOME_ARQUIVO_FASES, mode="w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["etapa", "t0", "t1"])
+            for nome, t0, t1 in fases_sessao:
+                w.writerow([nome, f"{t0:.3f}", f"{t1:.3f}"])
+        print(f"Etapas do roteiro salvas em {NOME_ARQUIVO_FASES}")
+    except Exception as e:
+        print(f"Não foi possível salvar as etapas: {e}")
 
 
 def salvar_dados_brutos():
@@ -1490,6 +1566,7 @@ def salvar_dados_brutos():
             "modo_altura": MODO_ALTURA,
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
+            "fases": [list(f) for f in fases_sessao],
             "calibracao": {
                 "dist_qp_e_ref": dist_qp_e_ref, "dist_qp_d_ref": dist_qp_d_ref, "yq_ref": yq_ref,
                 "chao_esq_ref": chao_esq_ref, "chao_dir_ref": chao_dir_ref,
@@ -1548,14 +1625,21 @@ def main():
     executar_calibracao_inicial()
 
     print("\n" + "=" * 90)
-    print("   🚀 GRAVAÇÃO INICIADA! Pode caminhar normalmente.")
+    if ROTEIRO_GUIADO:
+        print("   🚀 GRAVAÇÃO INICIADA! Siga as etapas que vão aparecer na tela.")
+    else:
+        print("   🚀 GRAVAÇÃO INICIADA! Pode caminhar normalmente.")
     print("   Pressione 'Ctrl + C' a qualquer momento para finalizar e abrir os relatórios e gráficos.")
     print("=" * 90 + "\n")
 
+    if ROTEIRO_GUIADO:
+        threading.Thread(target=executar_roteiro, daemon=True).start()
+
     try:
-        while True:
+        while not roteiro_terminou:
             mostrar_feedback()
             time.sleep(0.005)
+        raise KeyboardInterrupt
     except KeyboardInterrupt:
         rodando = False
         print("\n\n[*] Captura concluída! Sincronizando sinais biométricos e calculando métricas...", flush=True)
@@ -1580,6 +1664,7 @@ def main():
             d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
         )
 
+        salvar_fases()
         salvar_dados_brutos()
 
         tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
