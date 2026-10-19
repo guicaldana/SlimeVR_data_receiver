@@ -194,6 +194,7 @@ offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pé
 chao_esq_ref = 0.0
 chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
+pitch_tronco_ref = 0.0           # Inclinação natural do peito na calibração (graus)
 serie_altura = {}                # Série completa da altura (preenchida em calcular_sinais_completos)
 ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
 ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
@@ -1203,7 +1204,8 @@ def peso_cadeia(pitch_tronco):
     if pitch_tronco is None:
         return 0.0
     faixa = max(1e-6, TRONCO_INCLINADO_GRAUS - TRONCO_RETO_GRAUS)
-    return np.clip((np.abs(pitch_tronco) - TRONCO_RETO_GRAUS) / faixa, 0.0, 1.0)
+    inclinacao = np.abs(np.asarray(pitch_tronco, dtype=float) - pitch_tronco_ref)
+    return np.clip((inclinacao - TRONCO_RETO_GRAUS) / faixa, 0.0, 1.0)
 
 
 def combinar_alturas(osc_e, osc_d, cad_e, cad_d, pitch_tronco=None):
@@ -1336,7 +1338,7 @@ def executar_calibracao_inicial():
     global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
     global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
     global L_coxa_pe_e_ref, L_coxa_pe_d_ref, yq_ref
-    global tempo_inicial, cadeia
+    global tempo_inicial, cadeia, pitch_tronco_ref
 
     print("\n" + "=" * 90)
     print("   🎯 ETAPA 1: CALIBRAÇÃO ESTÁTICA DOS PÉS E CHÃO (NIVELAMENTO EM 0.0 CM)")
@@ -1439,6 +1441,12 @@ def executar_calibracao_inicial():
 
         calibrado = True
         cadeia = calibrar_cadeia(amostras_pos, amostras_quat)
+        # Postura natural do tronco: o pipeline mede a inclinação a partir dela
+        tp, pp = dados[TRACKER_PEITO]["t"], dados[TRACKER_PEITO]["pitch"]
+        if len(tp) >= 10:
+            tp, pp = np.array(tp), np.array(pp)
+            pitch_tronco_ref = float(np.median(pp[tp >= tp[-1] - 3.0]))
+            print(f"      • Tronco natural : {pitch_tronco_ref:+.1f}° (referência da inclinação)")
         print("=" * 90)
         print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
         print(f"      • Ref. Solo E    : {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
@@ -1485,7 +1493,7 @@ def salvar_dados_brutos():
             "calibracao": {
                 "dist_qp_e_ref": dist_qp_e_ref, "dist_qp_d_ref": dist_qp_d_ref, "yq_ref": yq_ref,
                 "chao_esq_ref": chao_esq_ref, "chao_dir_ref": chao_dir_ref,
-                "limiar_ruido_chao": limiar_ruido_chao,
+                "limiar_ruido_chao": limiar_ruido_chao, "pitch_tronco_ref": pitch_tronco_ref,
                 "cadeia_comprimentos": cadeia.comprimentos if cadeia is not None else None,
                 "cadeia_vetor_local": ({k: list(map(float, v)) for k, v in cadeia.vetor_local.items()}
                                        if cadeia is not None else None),
