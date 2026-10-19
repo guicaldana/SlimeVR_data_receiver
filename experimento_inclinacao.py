@@ -37,6 +37,7 @@ from datetime import datetime
 
 import numpy as np
 
+import cadeia_pernas
 import zupt_pe
 
 if sys.platform == "win32":
@@ -51,7 +52,7 @@ IP_OSC = "127.0.0.1"
 TRACKER_QUADRIL = "1"
 TORNOZELO = {"ESQ": "2", "DIR": "3"}
 TRACKER_PEITO = "6"
-INVERTER_PITCH_TRONCO = True     # Mesmo valor do calculo_passo.py
+INVERTER_PITCH_TRONCO = False    # Na gravação de 19/10, inclinar para a frente deu positivo sem inverter
 
 ALTURA_CAIXA_CM = 6.7
 INCLINACOES = (0, 30, 60)        # graus de flexão do tronco a testar
@@ -243,6 +244,31 @@ def analisar(pasta):
     ref = porfase["parado_reto"]
     base = {pe: mediana_final(y[pe], ref, 2) for pe in y}
 
+    # Cadeia das pernas calibrada no mesmo período parado
+    cadeia, series = None, None
+    if tem_imu:
+        series = cadeia_pernas.carregar_quats_solarxr(samples)
+        if all(seg in series for seg in cadeia_pernas.SEGMENTOS):
+            t_cal = np.linspace(ref["t0"] + (ref["t1"] - ref["t0"]) / 2.0, ref["t1"], 60)
+            pos = {tr: np.array([mediana_final(osc.get((tr, "position")), ref, c) for c in (1, 2, 3)])
+                   for tr in (TRACKER_QUADRIL, "4", "5", TORNOZELO["ESQ"], TORNOZELO["DIR"])}
+            comp = cadeia_pernas.comprimentos_de_osc(pos[TRACKER_QUADRIL], pos["4"], pos["5"],
+                                                     pos[TORNOZELO["ESQ"]], pos[TORNOZELO["DIR"]])
+            if not all(np.isfinite(v) and v > 0.2 for v in comp.values()):
+                comp = None  # sem joelhos no OSC: usa comprimentos padrão
+            cadeia = cadeia_pernas.CadeiaPernas(comp)
+            cadeia.calibrar(cadeia_pernas.quats_em(series, t_cal))
+        else:
+            print("  [Aviso] Sem coxas e canelas no SolarXR: cadeia das pernas não calculada.")
+
+    def altura_cadeia(pe, fase):
+        """Altura (cm) do pé acima do outro pela cadeia, na metade final da fase."""
+        if cadeia is None:
+            return float("nan")
+        t = np.linspace(fase["t0"] + (fase["t1"] - fase["t0"]) / 2.0, fase["t1"], 60)
+        dif = np.median(cadeia.dif_vertical(cadeia_pernas.quats_em(series, t)))
+        return float(dif if pe == "DIR" else -dif) * 100.0
+
     linhas = []
     for inc in cfg["inclinacoes"]:
         fi = porfase.get(f"inclinado_{inc}")
@@ -252,7 +278,7 @@ def analisar(pasta):
         subida_osc = min(mediana_final(y[pe], fi, 2) - base[pe] for pe in y) * 100.0
         for pe in ("ESQ", "DIR"):
             outro = "DIR" if pe == "ESQ" else "ESQ"
-            alt_osc, sobe, desce, troncos = [], [], [], []
+            alt_osc, alt_cad, sobe, desce, troncos = [], [], [], [], []
             k = 1
             while f"subir_{inc}_{pe}_{k}" in porfase:
                 fs, fd = porfase[f"subir_{inc}_{pe}_{k}"], porfase[f"descer_{inc}_{pe}_{k}"]
@@ -260,6 +286,7 @@ def analisar(pasta):
                 # Método atual: diferença entre os pés, descontada a diferença com tudo reto
                 dif = (mediana_final(y[pe], fs, 2) - base[pe]) - (mediana_final(y[outro], fs, 2) - base[outro])
                 alt_osc.append(dif * 100.0)
+                alt_cad.append(altura_cadeia(pe, fs))
                 # ZUPT: desnível do movimento que começa em cada fase.
                 # A fase "subir" começa com o pé ainda no chão, então o movimento chão -> caixa
                 # pode começar um pouco antes; aceita 1 s de folga no início.
@@ -275,6 +302,8 @@ def analisar(pasta):
                 "tronco_medido_graus": float(np.nanmedian(troncos)) if troncos else float("nan"),
                 "subida_osc_parado_cm": subida_osc,
                 "caixa_osc_cm": float(np.nanmedian(alt_osc)) if alt_osc else float("nan"),
+                "caixa_cadeia_cm": float(np.nanmedian(alt_cad)) if alt_cad else float("nan"),
+                "caixa_mescla_cm": float(np.nanmedian(np.add(alt_osc, alt_cad) / 2.0)) if alt_cad else float("nan"),
                 "caixa_zupt_subida_cm": float(np.median(sobe)) if sobe else float("nan"),
                 "caixa_zupt_descida_cm": float(np.median(desce)) if desce else float("nan"),
                 "n_subidas_zupt": len(sobe),
@@ -282,10 +311,16 @@ def analisar(pasta):
             })
 
     print(f"\n  Caixa real: {caixa:.1f} cm. Imune à inclinação = valores iguais em todas as inclinações.\n")
-    print(f"  {'alvo':>5} {'pé':>4} {'tronco':>7} {'OSC sobe parado':>16} {'caixa OSC':>10} {'caixa ZUPT ↑':>13} {'caixa ZUPT ↓':>13}")
+    print(f"  {'alvo':>5} {'pé':>4} {'tronco':>7} {'OSC sobe parado':>16} {'caixa OSC':>10} {'caixa cadeia':>13} "
+          f"{'caixa mescla':>13} {'caixa ZUPT ↑':>13}")
     for l in linhas:
         print(f"  {l['inclinacao_alvo']:>4}° {l['pe']:>4} {l['tronco_medido_graus']:>6.0f}° {l['subida_osc_parado_cm']:>13.1f} cm "
-              f"{l['caixa_osc_cm']:>7.1f} cm {l['caixa_zupt_subida_cm']:>10.1f} cm {l['caixa_zupt_descida_cm']:>10.1f} cm")
+              f"{l['caixa_osc_cm']:>7.1f} cm {l['caixa_cadeia_cm']:>10.1f} cm {l['caixa_mescla_cm']:>10.1f} cm "
+              f"{l['caixa_zupt_subida_cm']:>10.1f} cm")
+    for chave, nome in (("caixa_osc_cm", "OSC"), ("caixa_cadeia_cm", "cadeia"), ("caixa_mescla_cm", "mescla")):
+        erros = [abs(l[chave] - caixa) for l in linhas if np.isfinite(l[chave])]
+        if erros:
+            print(f"  Erro médio na caixa ({nome}): {np.mean(erros):.2f} cm")
 
     # Caminhadas: altura máxima e comprimento das passadas do ZUPT, reto x inclinado
     print("\n  Caminhadas (ZUPT):")

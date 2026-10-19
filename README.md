@@ -124,6 +124,18 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ---
 
+### `cadeia_pernas.py` — Altura do pé pela cadeia de transformações das pernas
+Reconstrói as pernas a partir da calibração parada: para cada coxa e canela, a rotação em relação à calibração é `R(t) = q(t) · q_calib⁻¹` (orientações do SolarXR), aplicada a um segmento reto de comprimento `L`. A altura de um pé em relação ao outro sai da cadeia pé → canela → coxa → quadril → coxa → canela → pé. O tronco, a cabeça e o tracker do quadril não entram (a pelve é considerada nivelada), então a inclinação do tronco não afeta a medida. Os comprimentos vêm das posições OSC na calibração.
+
+No `calculo_passo.py`, a opção `MODO_ALTURA` escolhe a medida de altura:
+- `"osc"`: diferença entre os pés no OSC (método anterior);
+- `"cadeia"`: cadeia das pernas;
+- `"mescla"` (padrão): média das duas.
+
+A aceleração das IMUs continua sendo usada só para o tempo dos passos (heel-strike). Na gravação de 19/10 (tronco a ~3°, ~23° e ~40°), o erro médio na caixa de 6,7 cm foi de 0,62 cm pelo OSC, 1,08 cm pela cadeia e 0,60 cm pela mescla. Com os pés no chão, a cadeia variou menos de 1 cm com o tronco a 40°, enquanto o OSC "subiu" 14,5 cm. O `experimento_inclinacao.py` mostra as três colunas para comparar.
+
+---
+
 ### `monitor_passadas.py` — Monitor em Tempo Real de Passadas (Heel-Strike IMU + OSC)
 Monitora continuamente os passos em tempo real durante a caminhada, exibindo no terminal o comprimento e os impactos.
 

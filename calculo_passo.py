@@ -19,6 +19,7 @@ import math
 import subprocess
 import threading
 import numpy as np
+import cadeia_pernas
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import ThreadingOSCUDPServer
 
@@ -79,6 +80,13 @@ TEMPO_CALIB_ESTATICA_S = 3.0  # 3 segundos de amostragem estática com ambos os 
 
 # True = altura da pelve congelada na calibração; False = pelve acompanha o tracker em tempo real
 PELVE_FIXA = True
+
+# Como medir a altura do pé:
+#   "osc"    = diferença de altura entre os pés no OSC (sobe junto com o tronco, mas os dois pés sobem igual)
+#   "cadeia" = cadeia de transformações das pernas (coxa e canela do SolarXR, sem tronco)
+#   "mescla" = média das duas
+# A aceleração das IMUs continua servindo só para o tempo dos passos (heel-strike).
+MODO_ALTURA = "mescla"
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
@@ -146,6 +154,11 @@ dados_imu = {
     "ESQ": {"t": [], "ax": [], "ay": [], "az": [], "acc": []},
     "DIR": {"t": [], "ax": [], "ay": [], "az": [], "acc": []}
 }
+
+# Orientação das coxas e canelas (SolarXR) para a cadeia de transformações
+dados_quat = {seg: {"t": [], "q": []} for seg in cadeia_pernas.SEGMENTOS}
+quat_atual = {seg: None for seg in cadeia_pernas.SEGMENTOS}
+cadeia = None                    # CadeiaPernas calibrada (None = só OSC)
 
 tempo_inicial = None
 ultimo_feedback = 0
@@ -348,6 +361,21 @@ def thread_leitor_solarxr(proc):
         if not rodando:
             break
         linha_str = linha.strip()
+        if linha_str.startswith("Q "):
+            partes = linha_str.split()
+            if len(partes) >= 6 and partes[1] in quat_atual:
+                try:
+                    q = tuple(float(v) for v in partes[2:6])
+                except ValueError:
+                    continue
+                agora = time.time()
+                with lock:
+                    if tempo_inicial is None:
+                        tempo_inicial = agora
+                    dados_quat[partes[1]]["t"].append(agora - tempo_inicial)
+                    dados_quat[partes[1]]["q"].append(q)
+                    quat_atual[partes[1]] = q
+            continue
         if not linha_str.startswith("D "):
             continue
 
@@ -477,6 +505,7 @@ def mostrar_feedback():
         r_coxa_e = rot_atual[TRACKER_COXA_ESQ]
         r_coxa_d = rot_atual[TRACKER_COXA_DIR]
         p_peito = rot_atual[TRACKER_PEITO]
+        quats = dict(quat_atual)
         t_init = tempo_inicial
         ult_imp = ultimo_impacto_str
 
@@ -503,21 +532,8 @@ def mostrar_feedback():
     d_ap, larg_lat = calcular_projecao_anteroposterior(p_esq, p_dir, r_quad, p_quad)
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
-    # 2. Folga Real do Solado com Pelve Fixa como Referencial Vertical
-    if p_quad is not None and calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
-        # Altura vertical de cada pé com a pelve mantida fixa (imune a inclinações de cabeça e tronco)
-        yq_uso = yq_ref if PELVE_FIXA else p_quad[1]
-        h_e = dist_qp_e_ref - (yq_uso - p_esq[1])
-        h_d = dist_qp_d_ref - (yq_uso - p_dir[1])
-        piso_apoio = min(h_e, h_d)
-        clearance_e_raw = max(0.0, (h_e - piso_apoio) * 100.0)
-        clearance_d_raw = max(0.0, (h_d - piso_apoio) * 100.0)
-    else:
-        y_e_norm = p_esq[1] - chao_esq_ref
-        y_d_norm = p_dir[1] - chao_dir_ref
-        piso_apoio = min(y_e_norm, y_d_norm)
-        clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
-        clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
+    # 2. Altura de cada pé acima do outro (OSC, cadeia das pernas ou mescla: MODO_ALTURA)
+    clearance_e_raw, clearance_d_raw = _clearance_bruto_cm(p_esq, p_dir, p_quad, quats)
 
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_e_raw *= ganho_esq
@@ -570,6 +586,22 @@ def aplicar_filtro(sinal, frequencia_corte, taxa_amostragem):
         return sinal
     b, a = butter(2, freq_norm, btype='low')
     return filtfilt(b, a, sinal)
+
+
+def alturas_cadeia_serie(t_comum, taxa_amostragem):
+    """Série da altura (cm) de cada pé acima do outro pela cadeia das pernas, ou (None, None)."""
+    if cadeia is None or MODO_ALTURA == "osc":
+        return None, None
+    series = {}
+    for seg in cadeia_pernas.SEGMENTOS:
+        d = dados_quat[seg]
+        if len(d["t"]) < 10:
+            return None, None
+        series[seg] = (np.array(d["t"]), np.array(d["q"]))
+    dif = cadeia.dif_vertical(cadeia_pernas.quats_em(series, t_comum))
+    dif = aplicar_filtro(dif, 5.0, taxa_amostragem)
+    e, d = cadeia_pernas.CadeiaPernas.alturas_pes(dif)
+    return e * 100.0, d * 100.0
 
 
 def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None):
@@ -667,6 +699,10 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
         clearance_dir = np.maximum(0.0, y_d_norm - piso_apoio) * 100.0
         elev_tornoz_esq = clearance_esq
         elev_tornoz_dir = clearance_dir
+
+    # Cadeia das pernas (SolarXR) e mescla com o OSC, conforme MODO_ALTURA
+    cad_e, cad_d = alturas_cadeia_serie(t_comum, taxa_amostragem)
+    clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d)
 
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_esq = clearance_esq * ganho_esq
@@ -1131,8 +1167,35 @@ def rodar_servidor(porta, handler):
         print(f"\n[AVISO] Erro na porta {porta}: {e}")
 
 
-def _clearance_bruto_cm(p_esq, p_dir, p_quad):
-    """Folga bruta (cm) de cada pé, sem ganho, com a mesma fórmula do feedback ao vivo."""
+def _clearance_cadeia_cm(quats):
+    """Altura (cm) de cada pé acima do outro pela cadeia das pernas, ou None se indisponível."""
+    if cadeia is None or any(quats.get(seg) is None for seg in cadeia_pernas.SEGMENTOS):
+        return None
+    dif = cadeia.dif_vertical({seg: np.array([quats[seg]]) for seg in cadeia_pernas.SEGMENTOS})
+    e, d = cadeia_pernas.CadeiaPernas.alturas_pes(dif)
+    return float(e[0]) * 100.0, float(d[0]) * 100.0
+
+
+def combinar_alturas(osc_e, osc_d, cad_e, cad_d):
+    """Junta as alturas do OSC e da cadeia conforme MODO_ALTURA (aceita escalares ou arrays)."""
+    if cad_e is None or MODO_ALTURA == "osc":
+        return osc_e, osc_d
+    if MODO_ALTURA == "cadeia":
+        return cad_e, cad_d
+    return (osc_e + cad_e) / 2.0, (osc_d + cad_d) / 2.0
+
+
+def _clearance_bruto_cm(p_esq, p_dir, p_quad, quats=None):
+    """Folga bruta (cm) de cada pé, sem ganho, no modo MODO_ALTURA."""
+    osc_e, osc_d = _clearance_osc_cm(p_esq, p_dir, p_quad)
+    cad = _clearance_cadeia_cm(quats if quats is not None else quat_atual)
+    if cad is None:
+        return osc_e, osc_d
+    return combinar_alturas(osc_e, osc_d, cad[0], cad[1])
+
+
+def _clearance_osc_cm(p_esq, p_dir, p_quad):
+    """Folga bruta (cm) de cada pé pelo OSC (diferença entre os pés)."""
     if p_quad is not None and calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
         yq_uso = yq_ref if PELVE_FIXA else p_quad[1]
         h_e = dist_qp_e_ref - (yq_uso - p_esq[1])
@@ -1166,8 +1229,9 @@ def calibrar_ganho_caixa():
                 pe = pos_atual[TORNOZELO_ESQ]
                 pd = pos_atual[TORNOZELO_DIR]
                 pq = pos_atual[TRACKER_QUADRIL]
+                qs = dict(quat_atual)
             if pe is not None and pd is not None:
-                amostras.append(_clearance_bruto_cm(pe, pd, pq)[idx])
+                amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
             time.sleep(0.01)
 
         medido = float(np.median(amostras)) if amostras else 0.0
@@ -1186,6 +1250,26 @@ def calibrar_ganho_caixa():
     print("=" * 90)
 
 
+def calibrar_cadeia(amostras_pos, amostras_quat):
+    """Monta a cadeia das pernas com as orientações e posições do período parado."""
+    if MODO_ALTURA == "osc":
+        return None
+    faltando = [seg for seg, qs in amostras_quat.items() if len(qs) < 10]
+    if faltando:
+        print(f"  [Aviso] Sem orientação SolarXR de {', '.join(faltando)}: altura só pelo OSC.")
+        return None
+    comp = None
+    if all(len(v) >= 10 for v in amostras_pos.values()):
+        med = {k: np.median(np.array(v), axis=0) for k, v in amostras_pos.items()}
+        comp = cadeia_pernas.comprimentos_de_osc(med["quad"], med["joelho_e"], med["joelho_d"], med["pe_e"], med["pe_d"])
+    nova = cadeia_pernas.CadeiaPernas(comp)
+    nova.calibrar(amostras_quat)
+    c = nova.comprimentos
+    print(f"      • Cadeia pernas  : coxa E {c['LEFT_UPPER_LEG']*100:4.1f} / canela E {c['LEFT_LOWER_LEG']*100:4.1f} | "
+          f"coxa D {c['RIGHT_UPPER_LEG']*100:4.1f} / canela D {c['RIGHT_LOWER_LEG']*100:4.1f} cm (modo: {MODO_ALTURA})")
+    return nova
+
+
 def executar_calibracao_inicial():
     """
     Executa a calibração estática inicial com os dois pés apoiados no chão.
@@ -1195,7 +1279,7 @@ def executar_calibracao_inicial():
     global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
     global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
     global L_coxa_pe_e_ref, L_coxa_pe_d_ref, yq_ref
-    global tempo_inicial
+    global tempo_inicial, cadeia
 
     print("\n" + "=" * 90)
     print("   🎯 ETAPA 1: CALIBRAÇÃO ESTÁTICA DOS PÉS E CHÃO (NIVELAMENTO EM 0.0 CM)")
@@ -1248,6 +1332,8 @@ def executar_calibracao_inicial():
     amostras_dd = []
     amostras_lce = []
     amostras_lcd = []
+    amostras_pos = {"quad": [], "pe_e": [], "pe_d": [], "joelho_e": [], "joelho_d": []}
+    amostras_quat = {seg: [] for seg in cadeia_pernas.SEGMENTOS}
 
     t_fim = time.time() + TEMPO_CALIB_ESTATICA_S
     while time.time() < t_fim and rodando:
@@ -1257,6 +1343,7 @@ def executar_calibracao_inicial():
             pq = pos_atual[TRACKER_QUADRIL]
             pce = pos_atual.get(TRACKER_COXA_ESQ)
             pcd = pos_atual.get(TRACKER_COXA_DIR)
+            qs = dict(quat_atual)
         if pe is not None and pd is not None and pq is not None:
             amostras_ye.append(pe[1])
             amostras_yd.append(pd[1])
@@ -1266,6 +1353,14 @@ def executar_calibracao_inicial():
             if pce is not None and pcd is not None:
                 amostras_lce.append(pce[1] - pe[1])
                 amostras_lcd.append(pcd[1] - pd[1])
+                amostras_pos["quad"].append(pq)
+                amostras_pos["pe_e"].append(pe)
+                amostras_pos["pe_d"].append(pd)
+                amostras_pos["joelho_e"].append(pce)
+                amostras_pos["joelho_d"].append(pcd)
+            for seg, q in qs.items():
+                if q is not None:
+                    amostras_quat[seg].append(q)
         time.sleep(0.01)
 
     if len(amostras_de) >= 20 and len(amostras_dd) >= 20:
@@ -1286,6 +1381,7 @@ def executar_calibracao_inicial():
         limiar_ruido_chao = max(1.0, 3.0 * max(sigma_e, sigma_d))
 
         calibrado = True
+        cadeia = calibrar_cadeia(amostras_pos, amostras_quat)
         print("=" * 90)
         print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
         print(f"      • Ref. Solo E    : {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
