@@ -102,7 +102,7 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 # (nome da etapa, segundos, instrução)
 ROTEIRO_GUIADO = True
 ROTEIRO = [
-    ("ir_inicio",           10, "Vá até o início da caminhada e fique parado"),
+    ("ir_inicio",           15, "Vá até o início da caminhada e fique parado"),
     ("caminhada_reta",      15, "CAMINHE normalmente, com o tronco RETO"),
     ("voltar_inicio",       15, "Volte ao início e prepare-se para caminhar inclinado"),
     ("caminhada_inclinada", 15, "CAMINHE com o tronco INCLINADO para a frente (mais de 30°)"),
