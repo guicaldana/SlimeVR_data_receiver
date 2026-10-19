@@ -101,6 +101,7 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 os.makedirs("dados", exist_ok=True)
 NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
 NOME_ARQUIVO_BRUTO = os.path.join("dados", "dados_brutos_sessao.csv")
+NOME_ARQUIVO_ENTRADA = os.path.join("dados", "dados_brutos_entrada.json")
 INTERVALO_FEEDBACK = 0.20     # Atualização do terminal 5 vezes por segundo
 # ==============================================================
 
@@ -193,6 +194,7 @@ offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pé
 chao_esq_ref = 0.0
 chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
+serie_altura = {}                # Série completa da altura (preenchida em calcular_sinais_completos)
 ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
 ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
 # No modo "pipeline", cada método tem o seu ganho por pé: {"osc": (E, D), "cadeia": (E, D)}
@@ -712,7 +714,15 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
     d_peito = dados[TRACKER_PEITO]
     if len(d_peito["t"]) > 10:
         pitch_serie = np.interp(t_comum, np.array(d_peito["t"]), np.array(d_peito["pitch"]))
+    osc_e_bruto, osc_d_bruto = clearance_esq.copy(), clearance_dir.copy()
     clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d, pitch_serie)
+    serie_altura.clear()
+    serie_altura.update({
+        "t": t_comum, "osc_esq_cm": osc_e_bruto, "osc_dir_cm": osc_d_bruto,
+        "cadeia_esq_cm": cad_e, "cadeia_dir_cm": cad_d, "tronco_graus": pitch_serie,
+        "peso_cadeia": (peso_cadeia(pitch_serie) * np.ones_like(t_comum)
+                        if MODO_ALTURA == "pipeline" and cad_e is not None else None),
+    })
 
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_esq = clearance_esq * ganho_esq
@@ -723,6 +733,8 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
     # Aplica zona morta de estabilização contra ruído e tremor no solo
     clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
     clearance_dir[clearance_dir < limiar_ruido_chao] = 0.0
+    serie_altura["altura_esq_cm"] = clearance_esq
+    serie_altura["altura_dir_cm"] = clearance_dir
     elev_tornoz_esq[elev_tornoz_esq < limiar_ruido_chao] = 0.0
     elev_tornoz_dir[elev_tornoz_dir < limiar_ruido_chao] = 0.0
 
@@ -1450,6 +1462,46 @@ def executar_calibracao_inicial():
         tempo_inicial = time.time()
 
 
+def salvar_dados_brutos():
+    """Salva a altura de cada pé ao longo do tempo (CSV) e as entradas brutas (JSON)."""
+    import json
+    try:
+        colunas = ["t", "altura_esq_cm", "altura_dir_cm", "osc_esq_cm", "osc_dir_cm",
+                   "cadeia_esq_cm", "cadeia_dir_cm", "tronco_graus", "peso_cadeia"]
+        n = len(serie_altura.get("t", []))
+        with open(NOME_ARQUIVO_BRUTO, mode="w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(colunas)
+            for i in range(n):
+                linha = []
+                for c in colunas:
+                    v = serie_altura.get(c)
+                    linha.append("" if v is None else f"{float(v[i]):.4f}")
+                w.writerow(linha)
+        entrada = {
+            "modo_altura": MODO_ALTURA,
+            "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
+            "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
+            "calibracao": {
+                "dist_qp_e_ref": dist_qp_e_ref, "dist_qp_d_ref": dist_qp_d_ref, "yq_ref": yq_ref,
+                "chao_esq_ref": chao_esq_ref, "chao_dir_ref": chao_dir_ref,
+                "limiar_ruido_chao": limiar_ruido_chao,
+                "cadeia_comprimentos": cadeia.comprimentos if cadeia is not None else None,
+                "cadeia_vetor_local": ({k: list(map(float, v)) for k, v in cadeia.vetor_local.items()}
+                                       if cadeia is not None else None),
+            },
+            "trackers": {tid: {k: list(map(float, v)) for k, v in d.items()} for tid, d in dados.items()},
+            "imu": {lado: {k: list(map(float, v)) for k, v in d.items()} for lado, d in dados_imu.items()},
+            "quats": {seg: {"t": list(map(float, d["t"])), "q": [list(map(float, q)) for q in d["q"]]}
+                      for seg, d in dados_quat.items()},
+        }
+        with open(NOME_ARQUIVO_ENTRADA, "w", encoding="utf-8") as f:
+            json.dump(entrada, f)
+        print(f"Série completa salva em {NOME_ARQUIVO_BRUTO} e entradas em {NOME_ARQUIVO_ENTRADA}")
+    except Exception as e:
+        print(f"Não foi possível salvar os dados brutos: {e}")
+
+
 def main():
     global rodando
     # 1. Servidores OSC (Porta 9000) e VMC (Porta 39539)
@@ -1519,6 +1571,8 @@ def main():
         t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
             d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
         )
+
+        salvar_dados_brutos()
 
         tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
             t_passo, d_passo_ap, taxa
