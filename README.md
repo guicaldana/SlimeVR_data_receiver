@@ -86,6 +86,40 @@ uv run python avaliar_altura_pe.py
 
 ---
 
+### `zupt_pe.py` e `experimento_inclinacao.py` — Altura do pé imune à inclinação do tronco
+**Problema:** as posições do OSC não são medidas direto nos pés. O SlimeVR monta o esqueleto a partir da cabeça e desce até os pés, então inclinar o tronco, a pelve ou as coxas muda a altura dos pés no OSC. Em `dados/teste_altura_referencias.csv`, com os dois pés no chão, os pés "sobem" 5 cm com o tronco a 24°, 18 cm a 51° e 47 cm a 67°.
+
+**Solução (`zupt_pe.py`):** calcula a trajetória de cada pé só com a IMU do próprio pé (SolarXR), integrando a aceleração entre dois momentos em que o pé está parado (ZUPT). Nenhum outro segmento entra na conta. Para cada movimento do pé, o script mostra a altura máxima, o desnível (0 em chão plano, ±6,7 cm na caixa) e o comprimento da passada.
+
+A aceleração que o SolarXR entrega vem num referencial girado em relação à orientação do pé, e sem correção a velocidade não volta a zero no fim da passada. Por isso há uma **calibração de montagem**: numa caminhada reta curta, o script estima uma rotação fixa para cada pé. A rotação escolhida é a que faz a velocidade voltar a zero, termina cada passada na altura do chão e mantém o pé num plano vertical.
+
+```powershell
+uv pip install scipy
+# Calibra a montagem com uma caminhada reta e salva em dados/zupt_montagem.json
+uv run python zupt_pe.py slimevr_client_raw/captures/CAMINHADA/samples.csv --calibrar-montagem
+# Analisa outra captura usando a calibração salva
+uv run python zupt_pe.py slimevr_client_raw/captures/SESSAO/samples.csv --csv dados/zupt_passadas.csv --grafico
+```
+
+**Experimento (`experimento_inclinacao.py`):** grava OSC e SolarXR ao mesmo tempo e guia o roteiro pelo terminal. Antes de rodar, abra o SlimeVR Server com o OSC ligado (porta 9000) e deixe a caixa de 6,7 cm ao lado dos pés. Também deixe uns 5 m livres para caminhar em linha reta.
+1. Parado, tronco reto (5 s).
+2. Caminhada reta, que serve para calibrar a montagem (12 s).
+3. Para o tronco a 0°, 30° e 60°: incline e fique parado (5 s). Depois, mantendo a inclinação, coloque o pé esquerdo na caixa (5 s), volte ao chão (4 s), coloque o pé direito na caixa (5 s), volte ao chão (4 s), e repita.
+4. Caminhada reta com o tronco inclinado (12 s).
+
+```powershell
+uv run python experimento_inclinacao.py
+# Para analisar de novo uma gravação já feita:
+uv run python experimento_inclinacao.py --analisar dados/experimentos/inclinacao_AAAAMMDD_HHMMSS
+```
+
+No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto os pés "sobem" no OSC só por inclinar o tronco, a altura da caixa pelo OSC (método atual, diferença entre os pés) e a altura da caixa pelo ZUPT ao subir e ao descer. Um método imune à inclinação dá ~6,7 cm em todas as linhas. Os arquivos ficam em `dados/experimentos/inclinacao_*/` (`resultado.csv`, `zupt_passadas.csv`, `osc.csv`, `fases.csv` e `solarxr/`).
+
+> [!IMPORTANT]
+> Confira a linha "Amostras novas SolarXR". O ZUPT precisa de pelo menos ~80 amostras novas por segundo por pé. A captura `sessao1` teve 85 Hz, mas as sessões de 09/10 tiveram de 25 a 44 Hz, e nessa taxa os picos de aceleração se perdem.
+
+---
+
 ### `monitor_passadas.py` — Monitor em Tempo Real de Passadas (Heel-Strike IMU + OSC)
 Monitora continuamente os passos em tempo real durante a caminhada, exibindo no terminal o comprimento e os impactos.
 
