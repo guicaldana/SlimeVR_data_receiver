@@ -327,6 +327,8 @@ def osc_handler_9000(address, *args):
     tempo_atual = time.time()
 
     with lock:
+        if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+            return
         if tempo_inicial is None:
             tempo_inicial = tempo_atual
         t_rel = tempo_atual - tempo_inicial
@@ -367,6 +369,8 @@ def vmc_handler_39539(address, *args):
 
     bone_name = str(args[0])
     with lock:
+        if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+            return
         ossos_vmc_detectados.add(bone_name)
 
         alvo = OSSO_CABECA.lower()
@@ -409,6 +413,8 @@ def thread_leitor_solarxr(proc):
                     continue
                 agora = time.time()
                 with lock:
+                    if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+                        return
                     if tempo_inicial is None:
                         tempo_inicial = agora
                     dados_quat[partes[1]]["t"].append(agora - tempo_inicial)
@@ -436,6 +442,8 @@ def thread_leitor_solarxr(proc):
 
         agora = time.time()
         with lock:
+            if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+                return
             if tempo_inicial is None:
                 tempo_inicial = agora
             t_rel = agora - tempo_inicial
@@ -1716,7 +1724,8 @@ def main():
             time.sleep(0.005)
         raise KeyboardInterrupt
     except KeyboardInterrupt:
-        rodando = False
+        with lock:
+            rodando = False  # a partir daqui as threads de captura não acrescentam mais nada
         print("\n\n[*] Captura concluída! Sincronizando sinais biométricos e calculando métricas...", flush=True)
 
         if proc_node:
