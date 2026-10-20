@@ -13,7 +13,7 @@ import { decodeDataFeedUpdates, encodeDataFeedRequest, flattenUpdate } from '../
 
 const {
   BodyPart, DataFeedMessage, DataFeedMessageHeaderT, DataFeedUpdateT,
-  DeviceDataT, DeviceIdT, HardwareInfoT, MessageBundle, MessageBundleT,
+  DeviceDataT, DeviceIdT, HardwareInfoT, HardwareStatusT, MessageBundle, MessageBundleT,
   QuatT, TrackerDataT, TrackerIdT, TrackerInfoT, Vec3fT,
 } = solarxr;
 
@@ -25,6 +25,7 @@ function fixturePacket() {
   left.info.displayName = 'Pé esquerdo';
   left.linearAcceleration = new Vec3fT(1, -2, 3);
   left.rotation = new QuatT(0, 0, 0, 1);
+  left.tps = 95;
 
   const right = new TrackerDataT();
   right.trackerId = new TrackerIdT(new DeviceIdT(8), 0);
@@ -38,6 +39,10 @@ function fixturePacket() {
   device.id = new DeviceIdT(7);
   device.hardwareInfo = new HardwareInfoT();
   device.hardwareInfo.firmwareVersion = 'teste';
+  device.hardwareStatus = new HardwareStatusT();
+  device.hardwareStatus.ping = 12;
+  device.hardwareStatus.rssi = -61;
+  device.hardwareStatus.batteryPctEstimate = 80;
   device.trackers = [left];
 
   const otherDevice = new DeviceDataT();
@@ -80,6 +85,7 @@ async function fakeServer(packet) {
     let started = false;
     socket.on('data', (bytes) => {
       if ((bytes[0] & 0x0f) === 8) {
+        clearInterval(timer);
         socket.end();
         return;
       }
@@ -87,7 +93,7 @@ async function fakeServer(packet) {
       started = true;
       socket.write(websocketFrame(packet));
       timer = setInterval(() => {
-        if (!socket.destroyed) socket.write(websocketFrame(packet));
+        if (!socket.destroyed && socket.writable) socket.write(websocketFrame(packet));
       }, 20);
     });
     socket.on('close', () => {
@@ -167,6 +173,15 @@ test('inspect e capture funcionam com servidor WebSocket de teste', async () => 
     assert.equal(summary.trackerCount, 2);
     assert.ok(summary.trackers[0].accelerationRows >= 2);
     assert.equal(summary.trackers[0].rawGyroRows, 0);
+    assert.equal(summary.trackers[0].tps.median, 95);
+    assert.equal(summary.trackers[0].pingMs.median, 12);
+    assert.equal(summary.trackers[0].rssiDbm.median, -61);
+    assert.equal(summary.trackers[0].batteryPct, 80);
+    assert.match(captured.stdout, /Pé E\s+95\s+12 ms\s+-61 dBm\s+80 %/);
+
+    const monitored = await runCli(['monitor', '--url', server.url, '--seconds', '1.5']);
+    assert.equal(monitored.code, 0, monitored.stderr);
+    assert.match(monitored.stdout, /Pé E\s+95\s+12 ms/);
   } finally {
     await server.close();
     await rm(temporary, { recursive: true, force: true });

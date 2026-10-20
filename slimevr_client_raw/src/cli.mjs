@@ -4,16 +4,18 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { finished } from 'node:stream/promises';
 import path from 'node:path';
 import process from 'node:process';
-import { CSV_HEADER, Diagnostics, recordToCsv } from './diagnostics.mjs';
+import { CSV_HEADER, Diagnostics, nomeParte, recordToCsv, tabelaRede } from './diagnostics.mjs';
 import { decodeDataFeedUpdates, encodeDataFeedRequest, flattenUpdate } from './protocol.mjs';
 
 const HELP = `Uso:
   node src/cli.mjs inspect [--url ws://127.0.0.1:21110]
   node src/cli.mjs capture [--url ws://127.0.0.1:21110] [--seconds 60]
                            [--interval-ms 0] [--out captures/NOME]
+  node src/cli.mjs monitor [--url ws://127.0.0.1:21110] [--seconds 0]
 
 inspect: lista os dispositivos e trackers físicos vistos pelo servidor.
-capture: grava samples.csv, metadata.json e summary.json.
+capture: grava samples.csv, metadata.json e summary.json (com TPS, ping, sinal e bateria).
+monitor: mostra ao vivo, a cada segundo, TPS, ping, sinal e bateria de cada tracker (não grava nada).
 --seconds 0: captura até Ctrl+C. --interval-ms 0: a cada tick do servidor.
 `;
 
@@ -22,8 +24,8 @@ function parseCommand(args) {
     return { command: 'help' };
   }
   const command = args[0];
-  if (!['inspect', 'capture'].includes(command)) throw new Error(`Comando inválido: ${command}`);
-  const options = { command, url: 'ws://127.0.0.1:21110', seconds: 60, intervalMs: 0 };
+  if (!['inspect', 'capture', 'monitor'].includes(command)) throw new Error(`Comando inválido: ${command}`);
+  const options = { command, url: 'ws://127.0.0.1:21110', seconds: command === 'monitor' ? 0 : 60, intervalMs: 0 };
   for (let i = 1; i < args.length; i += 2) {
     const flag = args[i];
     const value = args[i + 1];
@@ -254,15 +256,71 @@ async function capture(options) {
   };
   await writeFile(path.join(directory, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
   console.error(`Captura encerrada: ${directory}`);
-  console.log(JSON.stringify(summary, null, 2));
+  console.log('\nResumo da rede por tracker (medianas):');
+  console.log(tabelaRede(summary.trackers.map((t) => ({
+    nome: nomeParte(t.bodyPartName),
+    tps: t.tps?.median ?? null,
+    ping: t.pingMs?.median ?? null,
+    rssi: t.rssiDbm?.median ?? null,
+    bateria: t.batteryPct,
+  }))));
+  console.log(`\nDetalhes em ${path.join(directory, 'summary.json')}`);
   if (failure) throw failure;
   if (summary.trackerCount === 0) throw new Error('Nenhum tracker físico apareceu na captura');
+}
+
+async function monitor(options) {
+  const socket = await connect(options.url);
+  const ultimos = new Map();
+  let resolveDone;
+  const done = new Promise((resolve) => { resolveDone = resolve; });
+  const onMessage = (event) => {
+    try {
+      for (const update of decodeEvent(event)) {
+        for (const r of flattenUpdate(update, receivedTime(), 0)) {
+          const id = `${r.deviceId}:${r.trackerNum}`;
+          const atual = ultimos.get(id) ?? {};
+          ultimos.set(id, {
+            nome: nomeParte(r.bodyPartName ?? atual.bodyPartName),
+            bodyPartName: r.bodyPartName ?? atual.bodyPartName,
+            tps: r.trackerTps ?? atual.tps ?? null,
+            ping: r.pingMs ?? atual.ping ?? null,
+            rssi: r.rssi ?? atual.rssi ?? null,
+            bateria: r.batteryPct ?? atual.bateria ?? null,
+            visto: Date.now(),
+          });
+        }
+      }
+    } catch (error) {
+      console.error(`Erro ao ler o feed: ${error.message}`);
+    }
+  };
+  const desenhar = () => {
+    const agora = Date.now();
+    const linhas = [...ultimos.values()]
+      .toSorted((a, b) => a.nome.localeCompare(b.nome))
+      .map((l) => (agora - l.visto > 2000 ? { ...l, tps: 0 } : l));
+    console.clear();
+    console.log(`Monitor da rede SlimeVR (${new Date().toLocaleTimeString()}). Ctrl+C para sair.`);
+    console.log('Bom: TPS perto de 100 e ping abaixo de ~20 ms.\n');
+    console.log(linhas.length ? tabelaRede(linhas) : '  Aguardando dados do servidor...');
+  };
+  const timer = setInterval(desenhar, 1000);
+  const parar = () => { clearInterval(timer); socket.close(); resolveDone(); };
+  socket.addEventListener('message', onMessage);
+  socket.addEventListener('close', parar);
+  process.on('SIGINT', parar);
+  if (options.seconds > 0) setTimeout(parar, options.seconds * 1000);
+  socket.send(encodeDataFeedRequest('start', options.intervalMs));
+  await done;
+  process.off('SIGINT', parar);
 }
 
 try {
   const options = parseCommand(process.argv.slice(2));
   if (options.command === 'help') console.log(HELP);
   else if (options.command === 'inspect') await inspect(options);
+  else if (options.command === 'monitor') await monitor(options);
   else await capture(options);
 } catch (error) {
   console.error(`Erro: ${error.message}`);

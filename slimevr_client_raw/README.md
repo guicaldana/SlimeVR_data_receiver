@@ -44,6 +44,20 @@ Os bindings gerados do SolarXR estão incluídos em `vendor/`, fixados em uma re
 
 As pastas de saída precisam ser novas; o programa não sobrescreve sessões existentes. Use `--seconds 0` para gravar até `Ctrl+C`. Para um servidor em outro computador, use `--url ws://IP_DO_SERVIDOR:21110` se a configuração de rede permitir.
 
+## Conferir a rede (TPS, ping, sinal e bateria)
+
+Para ver ao vivo, a cada segundo, como cada tracker está chegando:
+
+```bash
+node src/cli.mjs monitor
+```
+
+A tabela mostra o TPS (pacotes por segundo que o tracker envia), o ping, a força do sinal (dBm) e a bateria. Bom: TPS perto de 100 e ping abaixo de ~20 ms; a linha ganha `<- ruim` com TPS abaixo de 50 ou ping acima de 50 ms. Use `--seconds N` para sair sozinho.
+
+A captura (`capture`) grava esses mesmos valores em `samples.csv` (colunas `tracker_tps`, `ping_ms`, `rssi_dbm`, `battery_pct`) e, no fim, mostra a mesma tabela com as medianas e salva os detalhes em `summary.json`.
+
+Em 20/10/2026, o TPS do quadril e das coxas caía para ~10 por interferência no Wi-Fi de 2,4 GHz; mudar o canal do roteador ajudou, mas a rede ainda oscilava.
+
 ## Como ler os arquivos
 
 Uma linha de `samples.csv` representa **um tracker em uma atualização do feed do servidor**, não necessariamente uma nova amostra da IMU. As colunas principais são:
@@ -55,6 +69,7 @@ Uma linha de `samples.csv` representa **um tracker em uma atualização do feed 
 | `device_id`, `tracker_num`, `body_part_name` | Identificação do tracker durante esta conexão. O ID pode mudar em outra sessão. |
 | `linear_acc_*_ms2` | Aceleração linear sem gravidade, em m/s², rotacionada pelo servidor para um referencial global com rumo desconhecido. |
 | `rotation_*` | Quaternion fusionado do tracker, componentes `x,y,z,w`. |
+| `tracker_tps`, `ping_ms`, `rssi_dbm`, `battery_pct` | Pacotes por segundo do tracker, ping, sinal Wi-Fi e bateria informados pelo servidor. |
 | `raw_acc_*_ms2`, `raw_gyro_*_rads` | Campos opcionais solicitados ao protocolo; espera-se que fiquem vazios no servidor padrão atual. |
 
 `summary.json` mostra, por tracker, contagens de linhas com cada sinal, taxa de linhas recebidas, intervalos entre linhas, e quantas vezes aceleração e orientação **mudaram numericamente**. A taxa de linhas **não é a frequência de amostragem da IMU**. Valores repetidos podem decorrer de um sensor parado ou de reenvio do último valor; essas contagens não distinguem as duas causas com certeza. `metadata.json` guarda as opções e ressalvas da sessão.
