@@ -61,6 +61,7 @@ else:
 LIMIAR_MAD = 4.5                  # Z-score modificado para detecção de outliers
 
 # Compensação de atraso de fase do filtro SlimeVR OSC vs SolarXR (Seção 4 do relatório)
+CORRIGIR_SENTIDO_AP = True   # confere pelo balanço dos pés se o eixo AP aponta para a frente
 TAU_SYNC_OSC = 0.025          # 25 ms de compensação do smoothing/slerp do servidor SlimeVR
 
 # Limiares de classificação postural
@@ -747,6 +748,18 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
     d_passo_ap = dx * fx + dz * fz
     d_passo_ap_filt = aplicar_filtro(d_passo_ap, 4.0, taxa_amostragem)
 
+    # Confere o sentido do eixo anteroposterior pelos próprios dados: enquanto o pé
+    # ESQ está no ar, ele avança em relação ao pé D, então (E - D) tem que crescer.
+    # Se crescer ao contrário, o eixo do quadril aponta para trás e o sinal é invertido.
+    if CORRIGIR_SENTIDO_AP:
+        dif_alt = y_e_norm - y_d_norm
+        no_ar = np.abs(dif_alt) > 0.02
+        if np.count_nonzero(no_ar) > 50:
+            sentido = float(np.sum(np.gradient(d_passo_ap_filt)[no_ar] * dif_alt[no_ar]))
+            if sentido < 0:
+                d_passo_ap_filt = -d_passo_ap_filt
+                print("      • Eixo anteroposterior invertido (o quadril apontava para trás); sinal corrigido.")
+
     # Largura da base de suporte lateral (Step Width)
     largura_base_m = np.abs(dx * fz - dz * fx)
 
@@ -843,7 +856,10 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
         # Cálculo do Jerk (derivada temporal da aceleração)
         jerk = np.gradient(acc_filtrada, 1.0 / taxa_amostragem)
 
-        dist_min_pts = int(taxa_amostragem * DIST_MIN_MESMO_PE_S)
+        # Distância curta aqui: o impulso (toe-off) do mesmo pé pode ser maior que o
+        # heel-strike e, com a distância de um ciclo, o esconderia. A polaridade AP abaixo
+        # descarta o impulso, e o filtro de coerência depois garante um passo por ciclo.
+        dist_min_pts = int(taxa_amostragem * 0.20)
 
         picos, _ = find_peaks(
             acc_filtrada,
