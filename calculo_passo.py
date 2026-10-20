@@ -110,16 +110,16 @@ ROTEIRO = [
     ("caminhada_reta",      15, "CAMINHE normalmente, com o tronco RETO"),
     ("voltar_inicio",       15, "Volte ao início e prepare-se para caminhar inclinado"),
     ("caminhada_inclinada", 15, "CAMINHE com o tronco INCLINADO para a frente (mais de 30°)"),
-    ("ir_caixa",            15, "Vá até a caixa e fique com os dois pés no chão, tronco reto"),
-    ("caixa_reto_ESQ",       5, "Pé ESQUERDO em cima da caixa, tronco RETO"),
-    ("chao_1",               4, "Pé de volta ao chão"),
-    ("caixa_reto_DIR",       5, "Pé DIREITO em cima da caixa, tronco RETO"),
-    ("chao_2",               4, "Pé de volta ao chão"),
-    ("inclinar",             5, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
-    ("caixa_incl_ESQ",       5, "Pé ESQUERDO em cima da caixa, tronco INCLINADO"),
-    ("chao_3",               4, "Pé de volta ao chão, continue inclinado"),
-    ("caixa_incl_DIR",       5, "Pé DIREITO em cima da caixa, tronco INCLINADO"),
-    ("chao_4",               4, "Pé de volta ao chão. Pode endireitar o tronco"),
+    ("ir_caixa",            25, "Vá até a caixa e fique com os dois pés no chão, tronco reto"),
+    ("caixa_reto_ESQ",       7, "Pé ESQUERDO em cima da caixa, tronco RETO"),
+    ("chao_1",               6, "Pé de volta ao chão"),
+    ("caixa_reto_DIR",       7, "Pé DIREITO em cima da caixa, tronco RETO"),
+    ("chao_2",               6, "Pé de volta ao chão"),
+    ("inclinar",             6, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
+    ("caixa_incl_ESQ",       7, "Pé ESQUERDO em cima da caixa, tronco INCLINADO"),
+    ("chao_3",               6, "Pé de volta ao chão, continue inclinado"),
+    ("caixa_incl_DIR",       7, "Pé DIREITO em cima da caixa, tronco INCLINADO"),
+    ("chao_4",               6, "Pé de volta ao chão. Pode endireitar o tronco"),
 ]
 
 # Arquivos de saída
@@ -1565,10 +1565,15 @@ def executar_calibracao_inicial():
 
 
 def _aviso_sonoro(vezes=1):
+    """Bipe na troca de etapa. No Windows tenta o som do sistema e o Beep; nos outros, o sino do terminal."""
     try:
         import winsound
+        try:
+            winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
+        except Exception:
+            pass
         for _ in range(vezes):
-            winsound.Beep(880, 180)
+            winsound.Beep(1000, 200)
     except Exception:
         print("\a" * vezes, end="", flush=True)
 
@@ -1588,7 +1593,11 @@ def executar_roteiro():
         t0 = time.time() - tempo_inicial
         fim = time.time() + segundos
         while rodando and time.time() < fim:
-            etapa_atual = f"{nome} {fim - time.time():4.1f}s"
+            falta = fim - time.time()
+            if falta <= 3.0 and i + 1 < len(ROTEIRO):
+                etapa_atual = f"{nome} {falta:4.1f}s >> PRÓXIMA: {ROTEIRO[i + 1][0]} em {int(falta) + 1}"
+            else:
+                etapa_atual = f"{nome} {falta:4.1f}s"
             time.sleep(0.05)
         fases_sessao.append((nome, t0, time.time() - tempo_inicial))
     etapa_atual = ""
