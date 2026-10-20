@@ -20,6 +20,7 @@ import subprocess
 import threading
 import numpy as np
 import cadeia_pernas
+import marcas_chao
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import ThreadingOSCUDPServer
 
@@ -94,7 +95,7 @@ TRONCO_RETO_GRAUS = 10.0       # até aqui só OSC (modo "pipeline")
 TRONCO_INCLINADO_GRAUS = 30.0  # a partir daqui só cadeia; entre os dois, transição linear
 # Na análise final, a escala da cadeia é ajustada para medir a mesma altura de passo
 # que o OSC na caminhada com o tronco reto (etapa "caminhada_reta" do roteiro).
-CADEIA_ESCALA_NA_MARCHA = True
+CADEIA_ESCALA_NA_MARCHA = False  # 20/10: desligado (o ganho da caixa acertou a caixa reta e inclinada)
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
@@ -107,9 +108,9 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 ROTEIRO_GUIADO = True
 ROTEIRO = [
     ("ir_inicio",           15, "Vá até o início da caminhada e fique parado"),
-    ("caminhada_reta",      15, "CAMINHE normalmente, com o tronco RETO"),
+    ("caminhada_reta",      15, "CAMINHE pisando com o calcanhar nas MARCAS (pé D na marca 0), tronco RETO"),
     ("voltar_inicio",       15, "Volte ao início e prepare-se para caminhar inclinado"),
-    ("caminhada_inclinada", 15, "CAMINHE com o tronco INCLINADO para a frente (mais de 30°)"),
+    ("caminhada_inclinada", 15, "CAMINHE pisando nas MARCAS (pé D na marca 0), tronco INCLINADO (mais de 30°)"),
     ("ir_caixa",            25, "Vá até a caixa e fique com os dois pés no chão, tronco reto"),
     ("caixa_reto_ESQ",       7, "Pé ESQUERDO em cima da caixa, tronco RETO"),
     ("chao_1",               6, "Pé de volta ao chão"),
@@ -1628,6 +1629,33 @@ def salvar_fases():
         print(f"Não foi possível salvar as etapas: {e}")
 
 
+def comparar_com_marcas(tempos, pes, comprimentos):
+    """Compara o comprimento de cada passo das caminhadas com as marcas do chão."""
+    for nome, t0, t1 in fases_sessao:
+        if not nome.startswith("caminhada"):
+            continue
+        m = (np.asarray(tempos) >= t0) & (np.asarray(tempos) <= t1 + 1.0)
+        casados = marcas_chao.casar_com_marcas(np.asarray(pes)[m], np.asarray(comprimentos)[m], np.asarray(tempos)[m])
+        print(f"\n  📏 Comprimento do passo x marcas no chão ({nome}):")
+        print(marcas_chao.resumo_texto(casados))
+
+
+def guardar_copia_sessao():
+    """Copia os arquivos desta sessão para dados/sessoes/AAAAMMDD_HHMMSS (para juntar várias depois)."""
+    import shutil
+    pasta = os.path.join("dados", "sessoes", time.strftime("%Y%m%d_%H%M%S"))
+    try:
+        os.makedirs(pasta, exist_ok=True)
+        for arq in (NOME_ARQUIVO_FASES, NOME_ARQUIVO_BRUTO, NOME_ARQUIVO_ENTRADA, NOME_ARQUIVO_PASSOS):
+            if os.path.exists(arq):
+                shutil.copy2(arq, pasta)
+        print(f"Cópia da sessão em {pasta}")
+        return pasta
+    except Exception as e:
+        print(f"Não foi possível copiar a sessão: {e}")
+        return None
+
+
 def salvar_dados_brutos():
     """Salva a altura de cada pé ao longo do tempo (CSV) e as entradas brutas (JSON)."""
     import json
@@ -1750,6 +1778,7 @@ def main():
 
         salvar_fases()
         salvar_dados_brutos()
+        pasta_sessao = guardar_copia_sessao()
 
         tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
             t_passo, d_passo_ap, taxa
@@ -1760,6 +1789,10 @@ def main():
             return
 
         clearances_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, clear_esq_cm, clear_dir_cm)
+        try:
+            comparar_com_marcas(tempos_impactos, pes_passos, dist_impactos)
+        except Exception as e:
+            print(f"Não foi possível comparar com as marcas: {e}")
         tornozelos_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, torn_esq_cm, torn_dir_cm)
         mascara_validos = remover_outliers(dist_impactos)
 
@@ -1771,6 +1804,9 @@ def main():
             clearances_passos_cm, tornozelos_passos_cm,
             pes_passos, projecoes_ap, mascara_validos
         )
+        if pasta_sessao and os.path.exists(NOME_ARQUIVO_PASSOS):
+            import shutil
+            shutil.copy2(NOME_ARQUIVO_PASSOS, pasta_sessao)
 
 
 if __name__ == "__main__":

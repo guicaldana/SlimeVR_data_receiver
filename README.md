@@ -124,6 +124,23 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ---
 
+### `marcas_chao.py` e `analisar_sessoes.py` — Comprimento do passo contra marcas no chão e resumo de várias sessões
+
+O comprimento do passo é conferido com um percurso de marcas no chão (`PERCURSO_MARCAS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). Nas duas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
+
+Cada coleta também é copiada para `dados/sessoes/AAAAMMDD_HHMMSS/`. Depois de algumas sessões:
+
+```powershell
+uv run python analisar_sessoes.py            # todas as pastas em dados/sessoes/
+uv run python analisar_sessoes.py dados/sessoes/20261021_1000 dados/sessoes/20261021_1030
+```
+
+O script recalcula tudo a partir dos dados brutos salvos e grava em `dados/analise_sessoes/`:
+- `caixa.csv`: altura medida na caixa (6,7 cm) por OSC, cadeia e pipeline, com o tronco reto e inclinado;
+- `inclinar.csv`: quanto a diferença entre os pés muda só por inclinar o tronco parado (ideal 0);
+- `passos.csv`: cada passo, com o comprimento medido, o comprimento real pelas marcas e a altura por cada método;
+- `resumo.txt` e `analise_sessoes.png`: erros médios, medido/real, Bland-Altman cadeia − OSC e o efeito da inclinação no comprimento.
+
 ### `cadeia_pernas.py` — Altura do pé pela cadeia de transformações das pernas
 Reconstrói as pernas a partir da calibração parada: para cada coxa e canela, a rotação em relação à calibração é `R(t) = q(t) · q_calib⁻¹` (orientações do SolarXR), aplicada a um segmento reto de comprimento `L`. A altura de um pé em relação ao outro sai da cadeia pé → canela → coxa → quadril → coxa → canela → pé. O tronco, a cabeça e o tracker do quadril não entram (a pelve é considerada nivelada), então a inclinação do tronco não afeta a medida. Os comprimentos vêm das posições OSC na calibração.
 
@@ -131,7 +148,7 @@ No `calculo_passo.py`, a opção `MODO_ALTURA` escolhe a medida de altura:
 - `"osc"`: diferença entre os pés no OSC (método anterior);
 - `"cadeia"`: cadeia das pernas;
 - `"mescla"`: média simples das duas;
-- `"pipeline"` (padrão): troca pela inclinação do tronco (tracker do peito). Com o tronco até `TRONCO_RETO_GRAUS` (10°) usa o OSC; a partir de `TRONCO_INCLINADO_GRAUS` (30°) usa a cadeia; entre os dois, passa de um para o outro aos poucos. Cada método tem o seu próprio ganho, aprendido na calibração da caixa (`ganhos_metodo`). Na análise final, com `CADEIA_ESCALA_NA_MARCHA = True`, o ganho da cadeia é trocado pelo que faz a cadeia medir a mesma altura de passo que o OSC na etapa `caminhada_reta`, porque com o pé em movimento a cadeia media quase o dobro do OSC (sessão de 19/10). Com isso, a cadeia fica certa na marcha, mas com o pé parado (por exemplo, numa caixa com o tronco inclinado) ela passa a medir cerca de metade.
+- `"pipeline"` (padrão): troca pela inclinação do tronco (tracker do peito). Com o tronco até `TRONCO_RETO_GRAUS` (10°) usa o OSC; a partir de `TRONCO_INCLINADO_GRAUS` (30°) usa a cadeia; entre os dois, passa de um para o outro aos poucos. Cada método tem o seu próprio ganho, aprendido na calibração da caixa (`ganhos_metodo`). A opção `CADEIA_ESCALA_NA_MARCHA` (desligada desde 20/10) troca o ganho da cadeia pelo que a faz medir a mesma altura de passo que o OSC na `caminhada_reta`. Ela foi desligada porque, na sessão de 20/10, o ganho da caixa acertou a caixa com o tronco reto e inclinado (erro médio 0,3 cm) e a cadeia concordou com o OSC na caminhada inclinada.
 
 **Roteiro guiado no `calculo_passo.py`:** com `ROTEIRO_GUIADO = True` (padrão), depois das calibrações o programa conduz as etapas da lista `ROTEIRO`, cada uma com tempo fixo e aviso sonoro na troca: ir ao início (15 s), caminhada reta (15 s), voltar (15 s), caminhada inclinada (15 s), ir até a caixa (25 s), pé E e pé D na caixa com o tronco reto (7 s cada, 6 s no chão depois de cada um), inclinar (6 s) e pé E e pé D na caixa inclinado. São 143 s no total. Nos últimos 3 s de cada etapa a linha do terminal mostra a próxima etapa em contagem regressiva, e a gravação encerra sozinha no fim. Ao final ficam salvos `dados/fases_sessao.csv` (início e fim de cada etapa), `dados/dados_brutos_sessao.csv` (altura de cada pé a cada instante, com OSC, cadeia, inclinação e peso da cadeia) e `dados/dados_brutos_entrada.json` (entradas e calibração, para reprocessar).
 
