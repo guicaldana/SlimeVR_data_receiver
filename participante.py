@@ -70,10 +70,14 @@ def pedir_circuito(circuitos, descricao, entrada=input):
         print(f"   Digite {', '.join(opcoes[:-1])} ou {opcoes[-1]}.")
 
 
-def pedir_altura_teste(padrao=None, entrada=input):
-    """Altura (cm) do objeto de teste desta coleta. Enter aceita o valor padrão."""
+def pedir_altura_teste(padrao=None, entrada=input, faixa=None):
+    """Altura (cm) do objeto de teste desta coleta. Enter aceita o valor padrão.
+
+    faixa=(mín, máx) só avisa quando o valor fica fora da faixa prevista e pede confirmação.
+    """
     while True:
-        dica = f"Enter = {padrao:.1f}" if padrao else "por exemplo 3,5"
+        dica = (f"Enter = {padrao:.1f}" if padrao else
+                f"entre {faixa[0]:g} e {faixa[1]:g} cm" if faixa else "por exemplo 3,5")
         txt = entrada(f"   Altura do objeto de teste em cm ({dica}): ").strip().replace(",", ".")
         if not txt and padrao:
             v = float(padrao)
@@ -84,6 +88,10 @@ def pedir_altura_teste(padrao=None, entrada=input):
                 print("   Digite um número em cm.")
                 continue
         if 0.5 <= v <= 40:
+            if faixa and not (faixa[0] <= v <= faixa[1]):
+                ok = entrada(f"   {v:.1f} cm está fora da faixa prevista ({faixa[0]:g} a {faixa[1]:g} cm). Usar assim? (s/n): ")
+                if ok.strip().lower() not in ("s", "sim"):
+                    continue
             print(f"   Objeto de teste: {v:.1f} cm\n")
             return round(v, 2)
         print("   A altura precisa estar entre 0,5 e 40 cm.")

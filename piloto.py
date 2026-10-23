@@ -129,8 +129,9 @@ CIRCUITOS_COLETA = ["A", "B", "C"]
 SORTEAR_ORDEM_CIRCUITOS = True      # ordem sorteada por participante, para evitar viés de ordem
 ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 # Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
-# As três alturas ainda serão definidas; por enquanto todas são digitadas no início da coleta.
+# As três alturas ainda serão definidas (entre 15 e 25 cm); todas são digitadas no início da coleta.
 ALTURAS_TESTE_PADRAO_CM = [None, None, None]
+FAIXA_ALTURAS_TESTE_CM = (15.0, 25.0)   # fora dela o programa pede confirmação
 ALTURAS_TESTE_CM = []               # definidas no início da coleta
 
 
@@ -2064,7 +2065,8 @@ def main():
     if PEDIR_PARTICIPANTE:
         PARTICIPANTE = cadastro.pedir_participante()
         print("   Alturas dos objetos de teste:")
-        PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h) for h in ALTURAS_TESTE_PADRAO_CM]
+        PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
+                                          for h in ALTURAS_TESTE_PADRAO_CM]
         definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
         if SORTEAR_ORDEM_CIRCUITOS:
             sortear_ordem_circuitos()
