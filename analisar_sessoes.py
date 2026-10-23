@@ -135,6 +135,8 @@ def analisar(cp, pasta):
 
     # 3. Caminhadas
     tempos, comp, imp, pes, proj = cp.detectar_passos_multimodal(t, d_passo_ap, 100.0)
+    if cp.COMPRIMENTO_PELO_PLATO and len(tempos) > 0:
+        tempos, comp, imp, pes, proj = cp.comprimento_pelo_plato(t, d_passo_ap, tempos, comp, imp, pes, proj)
     alturas = {k: np.array(cp.calcular_alturas_passos(t_s, tempos, pes, he, hd)) for k, (he, hd) in met.items()}
     for etapa in ("caminhada_reta", "caminhada_inclinada"):
         if etapa not in fases:

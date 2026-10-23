@@ -134,6 +134,14 @@ NOME_ARQUIVO_RELATORIO = os.path.join("dados", "relatorio.txt")
 # Antes do experimento o programa pede nome e altura do participante e grava tudo
 # em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/ (ver participante.py).
 PEDIR_PARTICIPANTE = True
+# Comprimento do passo: máximo da distância anteroposterior entre os pés em cada
+# platô (o pé da frente fica à frente até o outro passar). O contato do calcanhar
+# (aceleração) só marca o tempo do passo. False volta ao valor no instante do contato.
+COMPRIMENTO_PELO_PLATO = True
+PLATO_PERCENTIL = 100         # 100 = máximo do platô; 80 deixa o valor um pouco menor
+PLATO_LIMIAR_M = 0.05         # abaixo disso os pés estão lado a lado (fora do platô)
+PLATO_DURACAO_MIN_S = 0.15
+PLATO_JUNTAR_S = 0.5          # junta platôs do mesmo pé separados por menos que isso
 MOSTRAR_GRAFICOS = True       # abre as janelas dos gráficos no fim (os PNG são salvos de qualquer jeito)
 PASTA_COLETA = "dados"
 PARTICIPANTE = None           # {"nome": ..., "altura_cm": ...}
@@ -979,6 +987,75 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
     return tempos, comprimentos, impactos, pes, projecoes
 
 
+def platos_anteroposteriores(t, d_ap):
+    """Platôs da distância anteroposterior entre os pés.
+
+    d_ap > 0: pé ESQ à frente; d_ap < 0: pé DIR à frente. Cada platô vai de uma
+    passagem por zero (|d_ap| < PLATO_LIMIAR_M) à seguinte. Platôs seguidos do
+    mesmo pé com pausa curta são juntados. Retorna lista de dicts
+    {t0, t1, pe, comprimento_m, t_max}."""
+    t = np.asarray(t); d = np.asarray(d_ap)
+    sinal = np.sign(d)
+    sinal[np.abs(d) < PLATO_LIMIAR_M] = 0
+    platos, i, n = [], 0, len(d)
+    while i < n:
+        if sinal[i] == 0:
+            i += 1
+            continue
+        j = i
+        while j < n and sinal[j] == sinal[i]:
+            j += 1
+        if t[j - 1] - t[i] >= PLATO_DURACAO_MIN_S:
+            pe = "ESQ" if sinal[i] > 0 else "DIR"
+            if platos and platos[-1]["pe"] == pe and t[i] - platos[-1]["t1"] < PLATO_JUNTAR_S:
+                platos[-1]["t1"] = float(t[j - 1])
+                platos[-1]["fim"] = j
+            else:
+                platos.append({"t0": float(t[i]), "t1": float(t[j - 1]), "pe": pe, "ini": i, "fim": j})
+        i = j
+    for p in platos:
+        trecho = np.abs(d[p["ini"]:p["fim"]])
+        p["comprimento_m"] = float(np.percentile(trecho, PLATO_PERCENTIL))
+        p["t_max"] = float(t[p["ini"] + int(np.argmax(trecho))])
+    return platos
+
+
+def comprimento_pelo_plato(t, d_ap, tempos, comprimentos, impactos, pes, projecoes):
+    """Troca o comprimento de cada passo pelo valor do platô em que ele caiu.
+
+    - O pé do passo passa a ser o do platô (o que ficou à frente).
+    - Duas detecções no mesmo platô viram um passo só (fica a primeira).
+    - Um platô sem detecção vira um passo marcado com '*' (sem impacto da IMU),
+      no instante em que o pé atinge o máximo.
+    - Detecções fora de qualquer platô (pés lado a lado) são descartadas."""
+    platos = platos_anteroposteriores(t, d_ap)
+    if not platos:
+        return tempos, comprimentos, impactos, pes, projecoes
+    t = np.asarray(t); d = np.asarray(d_ap)
+    usados = {}
+    for k, t_k in enumerate(tempos):
+        dentro = [i for i, p in enumerate(platos) if p["t0"] <= t_k <= p["t1"]]
+        if not dentro:
+            perto = [i for i, p in enumerate(platos) if p["t0"] - 0.3 <= t_k <= p["t1"] + 0.3
+                     and p["pe"] in str(pes[k])]
+            dentro = sorted(perto, key=lambda i: min(abs(t_k - platos[i]["t0"]), abs(t_k - platos[i]["t1"])))
+        if dentro and dentro[0] not in usados:
+            usados[dentro[0]] = k
+    novos = []
+    for i, p in enumerate(platos):
+        sinal = 1.0 if p["pe"] == "ESQ" else -1.0
+        if i in usados:
+            k = usados[i]
+            imu = "*" not in str(pes[k])
+            novos.append((float(tempos[k]), p["comprimento_m"], float(impactos[k]),
+                          p["pe"] + ("" if imu else "*"), sinal * p["comprimento_m"]))
+        else:
+            novos.append((p["t_max"], p["comprimento_m"], 0.0, p["pe"] + "*", sinal * p["comprimento_m"]))
+    novos.sort(key=lambda x: x[0])
+    tt, cc, ii, pp, jj = zip(*novos)
+    return np.array(tt), np.array(cc), np.array(ii), np.array(pp), np.array(jj)
+
+
 def calcular_alturas_passos(t, tempos_impactos, pes_impactos, elevacao_esq_cm, elevacao_dir_cm):
     """Calcula a altura máxima (clearance em cm) atingida no balanço anterior ao impacto."""
     alturas = []
@@ -1337,6 +1414,8 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
                 ax.plot([x[k] - 0.4, x[k] + 0.4], [ref[i] * fator] * 2, color="k", lw=2)
         ax.set_xticks(x, [f"{k}\n{'D' if 'DIR' in pes_passos[i] else 'E'}" for k, i in zip(x, idx)])
         ax.set_ylabel(unidade)
+        topo = max([valores[i] * fator for i in idx] + [ref[i] * fator for i in idx if ref and i in ref] + [1.0])
+        ax.set_ylim(0, topo * 1.3)
         ax.grid(True, alpha=0.3, axis="y")
 
     def resumo(idx, valores, fator, un):
@@ -1937,6 +2016,10 @@ def processar_coleta():
     tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
         t_passo, d_passo_ap, taxa
     )
+    if COMPRIMENTO_PELO_PLATO and len(tempos_impactos) > 0:
+        tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = comprimento_pelo_plato(
+            t_passo, d_passo_ap, tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap
+        )
 
     if len(dist_impactos) == 0:
         print("Nenhum passo com a amplitude configurada foi detectado.")

@@ -61,7 +61,7 @@ uv run python plotar_todos_dados.py
 ### `calculo_passo.py` — Sistema Unificado de Marcha com Heel-Strike SolarXR (Principal)
 Combina a precisão inercial das **IMUs físicas (Porta 21110)** para identificar o momento exato do impacto do calcanhar (**Heel-Strike**) com os dados cinemáticos do **OSC (Porta 9000)** e da **Cabeça/Olhar via VMC (Porta 39539)**.
 - **Timing Preciso via IMU:** Identifica o instante exato em que cada pé colide com o chão através dos picos de aceleração linear das IMUs dos pés.
-- **Comprimento do Passo:** Amostra a distância horizontal Euclidiana entre os pés no exato milissegundo do contato inicial.
+- **Comprimento do Passo:** máximo da distância anteroposterior entre os pés em cada platô (do momento em que um pé passa à frente até o outro passar). O contato do calcanhar só marca o tempo do passo; duas detecções no mesmo platô viram um passo só, e um platô sem detecção vira um passo marcado com `*`. Nas sessões de 20/10 com marcas no chão o erro foi de 3 a 7 cm por passo (antes, pelo instante do contato, 5 a 15 cm). `COMPRIMENTO_PELO_PLATO = False` volta ao método antigo e `PLATO_PERCENTIL = 80` usa o percentil 80 em vez do máximo.
 - **Clearance / Altura do Passo:** Mede a elevação vertical pelo pé de apoio dinâmico ($\min(Y_e, Y_d)$).
 - **Postura do Tronco:** inclinação do peito (Pitch).
 - **Cadastro do participante:** antes de tudo, o terminal pede o nome e a altura (cm) do participante. Cada coleta vai para `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/`, e `dados/participantes/<Nome>/participante.json` guarda o cadastro e a lista de coletas.
