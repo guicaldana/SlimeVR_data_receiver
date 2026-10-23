@@ -129,8 +129,8 @@ CIRCUITOS_COLETA = ["A", "B", "C"]
 SORTEAR_ORDEM_CIRCUITOS = True      # ordem sorteada por participante, para evitar viés de ordem
 ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 # Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
-# A caixa de 7 cm deitada de outro jeito dá 9,5 cm (profundidade) e 14,6 cm (comprimento).
-ALTURAS_TESTE_PADRAO_CM = [None, 9.5, 14.6]
+# As três alturas ainda serão definidas; por enquanto todas são digitadas no início da coleta.
+ALTURAS_TESTE_PADRAO_CM = [None, None, None]
 ALTURAS_TESTE_CM = []               # definidas no início da coleta
 
 

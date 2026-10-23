@@ -139,7 +139,7 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ### `piloto.py` — Coleta do piloto (três circuitos e três alturas conhecidas numa coleta só)
 Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~5 min de roteiro, além da calibração e da preparação):
-1. Nome e altura do participante e as alturas dos três objetos de teste (padrão: menor digitada, 9,5 cm e 14,6 cm, que são a caixa de 7 cm deitada).
+1. Nome e altura do participante e as alturas dos três objetos de teste (as três são digitadas; as alturas ainda serão definidas).
 2. Calibração com a caixa de 7 cm.
 3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). A ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: A 60 s, B 45 s, C 30 s (`TEMPO_CAMINHADA_S`).
 4. Pé E e pé D sobre cada objeto com o tronco reto.
