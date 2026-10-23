@@ -138,13 +138,13 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 ---
 
 ### `piloto.py` — Coleta do piloto (três circuitos e três alturas conhecidas numa coleta só)
-Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~6 min de roteiro, ~18 min por participante com a preparação):
+Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~5 min de roteiro, além da calibração e da preparação):
 1. Nome e altura do participante e as alturas dos três objetos de teste (padrão: menor digitada, 9,5 cm e 14,6 cm, que são a caixa de 7 cm deitada).
 2. Calibração com a caixa de 7 cm.
-3. Nos circuitos A, B e C (no mesmo corredor, uma cor de fita para cada): uma caminhada com o tronco reto e uma com o tronco inclinado em cada.
-4. Pé E e pé D sobre cada objeto com o tronco reto; no de 9,5 cm (`ALTURA_COM_TRONCO_INCLINADO`), também com o tronco inclinado.
+3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). A ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: A 60 s, B 45 s, C 30 s (`TEMPO_CAMINHADA_S`).
+4. Pé E e pé D sobre cada objeto com o tronco reto.
 
-Além dos arquivos do `calculo_passo.py`, a pasta da coleta traz `altura_conhecida.csv` (altura medida e erro em cada objeto). Os gráficos e o relatório mostram cada caminhada separada (circuito e tronco), porque os circuitos têm comprimentos diferentes.
+Além dos arquivos do `calculo_passo.py`, a pasta da coleta traz `altura_conhecida.csv` (altura medida e erro em cada objeto). Os gráficos e o relatório mostram cada caminhada separada (por circuito), porque os circuitos têm comprimentos diferentes.
 
 ```powershell
 uv run python piloto.py
@@ -154,13 +154,13 @@ uv run python piloto.py
 
 O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). O `calculo_passo.py` usa o percurso de 20/10. O `piloto.py` usa os três numa coleta só:
 
-| Circuito | Passos | Comprimentos | Total | Marcas (cm) |
-|---|---|---|---|---|
-| A, curtos | 12 | 20 a 35 cm | 3,30 m | 0, 25, 45, 75, 110, 130, 155, 190, 220, 245, 265, 295, 330 |
-| B, médios | 10 | 40 a 55 cm | 4,75 m | 0, 45, 95, 135, 190, 240, 285, 340, 380, 430, 475 |
-| C, longos | 8 | 60 a 75 cm | 5,40 m | 0, 65, 135, 195, 270, 340, 405, 480, 540 |
+| Circuito | Passos | Sequência (cm × passos) | Total |
+|---|---|---|---|
+| A, curtos | 42 | 20×6, 25×6, 30×6, 35×6, 30×6, 25×6, 20×6 | 11,10 m |
+| B, médios | 28 | 40×4, 45×4, 50×4, 55×4, 50×4, 45×4, 40×4 | 13,00 m |
+| C, longos | 16 | 60×2, 65×2, 70×2, 75×4, 70×2, 65×2, 60×2 | 10,80 m |
 
-Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
+Os circuitos são progressivos: começam pelos passos menores da faixa, vão até os maiores e voltam aos menores, e todos têm 10 m ou mais. As marcas saem de `BLOCOS` em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
 
 Cada coleta fica em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/` (as coletas antigas estão em `dados/sessoes/`). Depois de algumas sessões:
 

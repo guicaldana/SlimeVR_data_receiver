@@ -4,10 +4,9 @@ Piloto: coleta única por participante com os três circuitos de marcas e altura
 Baseado no calculo_passo.py (mesmos cálculos), com o protocolo do piloto:
   1. nome e altura do participante e as alturas dos objetos de teste;
   2. calibração (caixa de 7 cm);
-  3. nos circuitos A, B e C (mesmo corredor): uma caminhada com o tronco reto e
-     uma com o tronco inclinado em cada;
-  4. pé E e pé D sobre cada objeto de teste com o tronco reto, e também com o
-     tronco inclinado no objeto de 9,5 cm.
+  3. uma caminhada em cada circuito A, B e C (mesmo corredor), com o tronco reto,
+     em ordem sorteada para cada participante;
+  4. pé E e pé D sobre cada objeto de teste, com o tronco reto.
 Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/.
 
     uv run python piloto.py
@@ -121,29 +120,28 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
 ROTEIRO_GUIADO = True
-TEMPO_CAMINHADA_S = 20
-TEMPO_VOLTA_S = 15
+# Circuitos progressivos (menores -> maiores -> menores), todos com 10 m ou mais.
+TEMPO_CAMINHADA_S = {"A": 60, "B": 45, "C": 30}   # A tem 42 passos, B 28 e C 16
+TEMPO_VOLTA_S = 20
 # Uma coleta só: os três circuitos ficam no mesmo corredor (uma cor de fita para cada).
-# Em cada circuito: uma caminhada com o tronco reto e uma com o tronco inclinado.
+# Uma caminhada com o tronco reto em cada circuito.
 CIRCUITOS_COLETA = ["A", "B", "C"]
+SORTEAR_ORDEM_CIRCUITOS = True      # ordem sorteada por participante, para evitar viés de ordem
+ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 # Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
 # A caixa de 7 cm deitada de outro jeito dá 9,5 cm (profundidade) e 14,6 cm (comprimento).
 ALTURAS_TESTE_PADRAO_CM = [None, 9.5, 14.6]
-ALTURA_COM_TRONCO_INCLINADO = 9.5   # só nesta altura o pé sobe também com o tronco inclinado
 ALTURAS_TESTE_CM = []               # definidas no início da coleta
 
 
 def montar_roteiro(alturas_cm=None):
     """Lista de (nome da etapa, segundos, instrução) da coleta."""
     r = []
-    for c in CIRCUITOS_COLETA:
+    for c in ORDEM_CIRCUITOS:
         r += [
             (f"ir_inicio_{c}", TEMPO_VOLTA_S, f"Vá até o início do CIRCUITO {c}, pé D na marca 0"),
-            (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S,
+            (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S[c],
              f"CIRCUITO {c}: CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés"),
-            (f"voltar_inicio_{c}", TEMPO_VOLTA_S, f"Volte ao início do CIRCUITO {c}, pé D na marca 0"),
-            (f"caminhada_inclinada_{c}", TEMPO_CAMINHADA_S,
-             f"CIRCUITO {c}: CAMINHE pisando nas MARCAS, tronco INCLINADO (mais de 30°); no fim junte os pés"),
         ]
     for j, h in enumerate(alturas_cm or [ALTURA_CAIXA_CM], start=1):
         obj = f"objeto de {h:.1f} cm"
@@ -154,14 +152,6 @@ def montar_roteiro(alturas_cm=None):
             (f"caixa_reto_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}, tronco RETO"),
             (f"chao_reto_DIR_{j}",    6, "Pé de volta ao chão"),
         ]
-        if ALTURA_COM_TRONCO_INCLINADO is not None and abs(h - ALTURA_COM_TRONCO_INCLINADO) < 0.05:
-            r += [
-                ("inclinar",              6, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
-                (f"caixa_incl_ESQ_{j}",   7, f"Pé ESQUERDO em cima do {obj}, tronco INCLINADO"),
-                (f"chao_incl_ESQ_{j}",    6, "Pé de volta ao chão, continue inclinado"),
-                (f"caixa_incl_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}, tronco INCLINADO"),
-                (f"chao_incl_DIR_{j}",    6, "Pé de volta ao chão. Pode endireitar o tronco"),
-            ]
     return r
 
 
@@ -1206,7 +1196,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     # 3. Parâmetros Espaciais da Marcha
     if PARTICIPANTE:
         print(f"\n--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm"
-              f" | circuitos {', '.join(CIRCUITOS_COLETA)} ---")
+              f" | ordem dos circuitos {' -> '.join(ORDEM_CIRCUITOS)} ---")
     print(f"\n--- 3. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
@@ -1974,6 +1964,16 @@ def avaliar_altura_conhecida():
             w.writerow([f"{ref:.2f}", cond, f"{tr:.1f}", pe, f"{medido:.2f}", f"{erro:.2f}"])
 
 
+def sortear_ordem_circuitos(gerador=None):
+    """Sorteia a ordem dos circuitos desta coleta e refaz o roteiro."""
+    global ORDEM_CIRCUITOS, ROTEIRO
+    import random
+    g = gerador or random.SystemRandom()
+    ORDEM_CIRCUITOS = g.sample(CIRCUITOS_COLETA, len(CIRCUITOS_COLETA))
+    ROTEIRO = montar_roteiro(ALTURAS_TESTE_CM or None)
+    return ORDEM_CIRCUITOS
+
+
 def definir_alturas_teste(alturas_cm):
     """Guarda as alturas dos objetos de teste e refaz o roteiro com elas."""
     global ALTURAS_TESTE_CM, ROTEIRO
@@ -2029,6 +2029,7 @@ def salvar_dados_brutos():
         entrada = {
             "participante": PARTICIPANTE,
             "circuitos": CIRCUITOS_COLETA,
+            "ordem_circuitos": ORDEM_CIRCUITOS,
             "percursos_marcas": {c: marcas_chao.CIRCUITOS[c] for c in CIRCUITOS_COLETA},
             "altura_caixa_calibracao_cm": ALTURA_CAIXA_CM,
             "alturas_teste_cm": ALTURAS_TESTE_CM,
@@ -2065,6 +2066,10 @@ def main():
         print("   Alturas dos objetos de teste:")
         PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h) for h in ALTURAS_TESTE_PADRAO_CM]
         definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
+        if SORTEAR_ORDEM_CIRCUITOS:
+            sortear_ordem_circuitos()
+        PARTICIPANTE["ordem_circuitos"] = list(ORDEM_CIRCUITOS)
+        print(f"   Ordem sorteada dos circuitos: {' -> '.join(ORDEM_CIRCUITOS)}\n")
         pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
         definir_pasta_saida(pasta)
         print(f"   Os arquivos desta coleta vão para {pasta}\n")

@@ -11,22 +11,45 @@ anteroposterior entre os dois pés, que é exatamente essa distância entre marc
 
 # (posição em cm, pé que pisa). Todos começam com o pé D na marca 0.
 # Depois da última marca a pessoa junta os pés; esse passo de parada não conta.
-CIRCUITOS = {
-    # Passos curtos (típicos de Parkinson): 12 passos de 20 a 35 cm, 3,30 m
-    "A": [(0, "DIR"), (25, "ESQ"), (45, "DIR"), (75, "ESQ"), (110, "DIR"), (130, "ESQ"), (155, "DIR"),
-          (190, "ESQ"), (220, "DIR"), (245, "ESQ"), (265, "DIR"), (295, "ESQ"), (330, "DIR")],
-    # Passos médios: 10 passos de 40 a 55 cm, 4,75 m
-    "B": [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (135, "ESQ"), (190, "DIR"), (240, "ESQ"),
-          (285, "DIR"), (340, "ESQ"), (380, "DIR"), (430, "ESQ"), (475, "DIR")],
-    # Passos longos: 8 passos de 60 a 75 cm, 5,40 m
-    "C": [(0, "DIR"), (65, "ESQ"), (135, "DIR"), (195, "ESQ"), (270, "DIR"), (340, "ESQ"),
-          (405, "DIR"), (480, "ESQ"), (540, "DIR")],
-    # Percurso usado nos testes de 20/10/2026
-    "20-10": [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (150, "ESQ"), (190, "DIR"), (240, "ESQ"),
-              (285, "DIR"), (330, "ESQ"), (380, "DIR"), (410, "ESQ")],
+
+
+def circuito_progressivo(blocos):
+    """Monta as marcas a partir de blocos (comprimento cm, número de passos).
+
+    O primeiro passo é do pé E, e os pés alternam. Os circuitos são progressivos:
+    começam pelos passos menores da faixa, vão até os maiores e voltam aos menores.
+    """
+    marcas, pos, pe = [(0, "DIR")], 0, "ESQ"
+    for comp, n in blocos:
+        for _ in range(n):
+            pos += comp
+            marcas.append((pos, pe))
+            pe = "DIR" if pe == "ESQ" else "ESQ"
+    return marcas
+
+
+BLOCOS = {
+    # Passos curtos (típicos de Parkinson): 20-25-30-35-30-25-20 cm, 42 passos, 11,10 m
+    "A": [(20, 6), (25, 6), (30, 6), (35, 6), (30, 6), (25, 6), (20, 6)],
+    # Passos médios: 40-45-50-55-50-45-40 cm, 28 passos, 13,00 m
+    "B": [(40, 4), (45, 4), (50, 4), (55, 4), (50, 4), (45, 4), (40, 4)],
+    # Passos longos: 60-65-70-75-70-65-60 cm, 16 passos, 10,80 m
+    "C": [(60, 2), (65, 2), (70, 2), (75, 4), (70, 2), (65, 2), (60, 2)],
 }
-DESCRICAO = {"A": "curtos, 20 a 35 cm, 3,30 m", "B": "médios, 40 a 55 cm, 4,75 m",
-             "C": "longos, 60 a 75 cm, 5,40 m", "20-10": "percurso de 20/10"}
+CIRCUITOS = {c: circuito_progressivo(b) for c, b in BLOCOS.items()}
+# Percurso usado nos testes de 20/10/2026
+CIRCUITOS["20-10"] = [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (150, "ESQ"), (190, "DIR"), (240, "ESQ"),
+                      (285, "DIR"), (330, "ESQ"), (380, "DIR"), (410, "ESQ")]
+
+
+def _descrever(c):
+    m = CIRCUITOS[c]
+    faixa = "-".join(str(comp) for comp, _ in BLOCOS[c])
+    return f"{faixa} cm, {len(m) - 1} passos, {m[-1][0] / 100:.2f} m".replace(".", ",")
+
+
+DESCRICAO = {"A": "curtos, " + _descrever("A"), "B": "médios, " + _descrever("B"),
+             "C": "longos, " + _descrever("C"), "20-10": "percurso de 20/10"}
 
 CIRCUITO_ATIVO = "20-10"
 PERCURSO_MARCAS = CIRCUITOS[CIRCUITO_ATIVO]
