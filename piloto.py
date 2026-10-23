@@ -2064,14 +2064,22 @@ def main():
     # 0. Cadastro do participante e pasta da coleta
     if PEDIR_PARTICIPANTE:
         PARTICIPANTE = cadastro.pedir_participante()
+        PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
+        # Na rodada valendo, Enter repete as alturas usadas na coleta anterior do participante
+        anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
+        padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
         print("   Alturas dos objetos de teste:")
         PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
-                                          for h in ALTURAS_TESTE_PADRAO_CM]
+                                          for h in padroes]
         definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
-        if SORTEAR_ORDEM_CIRCUITOS:
+        # Familiarização em ordem fixa (A, B, C); a rodada valendo tem a ordem sorteada
+        if PARTICIPANTE["rodada"] == "valendo" and SORTEAR_ORDEM_CIRCUITOS:
             sortear_ordem_circuitos()
+            texto_ordem = "Ordem sorteada dos circuitos"
+        else:
+            texto_ordem = "Ordem dos circuitos (familiarização, fixa)"
         PARTICIPANTE["ordem_circuitos"] = list(ORDEM_CIRCUITOS)
-        print(f"   Ordem sorteada dos circuitos: {' -> '.join(ORDEM_CIRCUITOS)}\n")
+        print(f"   {texto_ordem}: {' -> '.join(ORDEM_CIRCUITOS)}\n")
         pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
         definir_pasta_saida(pasta)
         print(f"   Os arquivos desta coleta vão para {pasta}\n")

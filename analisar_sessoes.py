@@ -281,11 +281,22 @@ def grafico(caixa, passos, caminho):
     fig.savefig(caminho, dpi=150)
 
 
+def _eh_familiarizacao(pasta):
+    try:
+        with open(os.path.join(pasta, "dados_brutos_entrada.json"), encoding="utf-8") as f:
+            return ((json.load(f).get("participante") or {}).get("rodada")) == "familiarizacao"
+    except Exception:
+        return False
+
+
 def main():
     pastas = sys.argv[1:] or sorted(
         glob.glob(os.path.join("dados", "sessoes", "*"))
         + [p for p in glob.glob(os.path.join("dados", "participantes", "*", "*")) if os.path.isdir(p)])
     pastas = [p for p in pastas if os.path.exists(os.path.join(p, "dados_brutos_entrada.json"))]
+    if not sys.argv[1:]:
+        # A rodada de familiarização do piloto fica fora do resumo (passe a pasta para incluí-la)
+        pastas = [p for p in pastas if not _eh_familiarizacao(p)]
     if not pastas:
         sys.exit("Nenhuma sessão encontrada em dados/sessoes/ nem em dados/participantes/.")
     cp = _importar_calculo()

@@ -97,11 +97,38 @@ def pedir_altura_teste(padrao=None, entrada=input, faixa=None):
         print("   A altura precisa estar entre 0,5 e 40 cm.")
 
 
+RODADAS = {"1": "familiarizacao", "2": "valendo"}
+NOME_RODADA = {"familiarizacao": "familiarização", "valendo": "valendo"}
+
+
+def pedir_rodada(entrada=input):
+    """Pergunta se esta coleta é a rodada de familiarização ou a rodada valendo."""
+    while True:
+        r = entrada("   Rodada (1 = familiarização, 2 = valendo): ").strip()
+        if r in RODADAS:
+            print(f"   Rodada: {NOME_RODADA[RODADAS[r]]}\n")
+            return RODADAS[r]
+        print("   Digite 1 ou 2.")
+
+
+def ultima_coleta(nome, base=PASTA_PARTICIPANTES):
+    """Última coleta registrada no participante.json desse participante (ou None)."""
+    arq = os.path.join(base, nome_para_pasta(nome), "participante.json")
+    try:
+        with open(arq, encoding="utf-8") as f:
+            coletas = json.load(f).get("coletas", [])
+        return coletas[-1] if coletas else None
+    except Exception:
+        return None
+
+
 def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     """Cria dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>[_circuitoX]/ e atualiza o participante.json."""
     data_hora = time.strftime("%Y%m%d_%H%M%S")
     if participante.get("circuito"):
         data_hora += f"_circuito{participante['circuito']}"
+    if participante.get("rodada"):
+        data_hora += f"_{participante['rodada']}"
     pasta_participante = os.path.join(base, nome_para_pasta(participante["nome"]))
     pasta = os.path.join(pasta_participante, data_hora)
     os.makedirs(pasta, exist_ok=True)
@@ -118,7 +145,9 @@ def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     cadastro["altura_cm"] = participante["altura_cm"]
     coletas = cadastro.get("coletas", [])
     coletas.append({"pasta": data_hora, "altura_cm": participante["altura_cm"],
-                    "circuito": participante.get("circuito")})
+                    "circuito": participante.get("circuito"), "rodada": participante.get("rodada"),
+                    "alturas_teste_cm": participante.get("alturas_teste_cm"),
+                    "ordem_circuitos": participante.get("ordem_circuitos")})
     cadastro["coletas"] = coletas
     with open(cadastro_arq, "w", encoding="utf-8") as f:
         json.dump(cadastro, f, ensure_ascii=False, indent=2)
