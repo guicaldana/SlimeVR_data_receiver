@@ -81,13 +81,13 @@ def casar_com_marcas(pes_detectados, comprimentos_m, tempos=None, percurso=None)
     return saida
 
 
-def resumo_texto(casados):
+def resumo_texto(casados, percurso=None):
     if not casados:
         return "    nenhum passo casou com as marcas"
     import numpy as np
     e = np.array([c["erro_m"] for c in casados]) * 100
     r = np.array([c["medido_m"] / c["real_m"] for c in casados])
-    linhas = [f"    {len(casados)}/{len(passos_esperados())} passos | erro médio {e.mean():+.1f} cm "
+    linhas = [f"    {len(casados)}/{len(passos_esperados(percurso))} passos | erro médio {e.mean():+.1f} cm "
               f"(desvio {e.std():.1f}) | erro absoluto médio {np.abs(e).mean():.1f} cm | medido/real {np.median(r):.2f}"]
     linhas.append("    " + "  ".join(f"{c['pe'][0]}{c['real_m']*100:.0f}→{c['medido_m']*100:.0f}" for c in casados))
     return "\n".join(linhas)

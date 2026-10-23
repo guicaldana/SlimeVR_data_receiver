@@ -137,14 +137,14 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ---
 
-### `piloto.py` — Coleta do piloto (um circuito e uma altura conhecida por coleta)
-Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto:
-1. Nome e altura do participante, circuito (A, B ou C) e altura do objeto de teste. O padrão é B = 9,5 cm e C = 14,6 cm (a caixa de 7 cm deitada); no A a altura é digitada.
+### `piloto.py` — Coleta do piloto (três circuitos e três alturas conhecidas numa coleta só)
+Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~6 min de roteiro, ~18 min por participante com a preparação):
+1. Nome e altura do participante e as alturas dos três objetos de teste (padrão: menor digitada, 9,5 cm e 14,6 cm, que são a caixa de 7 cm deitada).
 2. Calibração com a caixa de 7 cm.
-3. `REPETICOES_RETA` (3) caminhadas no circuito com o tronco reto e `REPETICOES_INCLINADA` (2) com o tronco inclinado, cada uma seguida da volta ao início.
-4. Pé E e pé D sobre o objeto de teste, com o tronco reto e inclinado.
+3. Nos circuitos A, B e C (no mesmo corredor, uma cor de fita para cada): uma caminhada com o tronco reto e uma com o tronco inclinado em cada.
+4. Pé E e pé D sobre cada objeto com o tronco reto; no de 9,5 cm (`ALTURA_COM_TRONCO_INCLINADO`), também com o tronco inclinado.
 
-O roteiro tem cerca de 4,5 min. Além dos arquivos do `calculo_passo.py`, a pasta da coleta (`dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_circuitoX/`) traz `altura_conhecida.csv`, com a altura medida em cada etapa sobre o objeto e o erro. Nos gráficos, as repetições de cada tipo de caminhada aparecem juntas.
+Além dos arquivos do `calculo_passo.py`, a pasta da coleta traz `altura_conhecida.csv` (altura medida e erro em cada objeto). Os gráficos e o relatório mostram cada caminhada separada (circuito e tronco), porque os circuitos têm comprimentos diferentes.
 
 ```powershell
 uv run python piloto.py
@@ -152,7 +152,7 @@ uv run python piloto.py
 
 ### `marcas_chao.py` e `analisar_sessoes.py` — Comprimento do passo contra marcas no chão e resumo de várias sessões
 
-O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). O `calculo_passo.py` usa o percurso de 20/10. O `piloto.py` pergunta qual circuito será usado, e o nome da pasta da coleta termina com `_circuitoA`, `_circuitoB` ou `_circuitoC`:
+O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). O `calculo_passo.py` usa o percurso de 20/10. O `piloto.py` usa os três numa coleta só:
 
 | Circuito | Passos | Comprimentos | Total | Marcas (cm) |
 |---|---|---|---|---|

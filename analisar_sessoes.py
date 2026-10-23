@@ -35,10 +35,7 @@ import marcas_chao
 PASTA_SAIDA = os.path.join("dados", "analise_sessoes")
 CAIXA_CM = 6.7               # caixa usada nas sessões até 22/10 (valor nominal da calibração)
 ALTURA_TESTE_SESSAO = None   # altura conhecida da sessão sendo lida (piloto.py grava no JSON)
-ETAPAS_CAIXA = {
-    "caixa_reto_ESQ": ("reto", "ESQ"), "caixa_reto_DIR": ("reto", "DIR"),
-    "caixa_incl_ESQ": ("inclinado", "ESQ"), "caixa_incl_DIR": ("inclinado", "DIR"),
-}
+ALTURAS_TESTE_SESSAO = []    # alturas de teste do piloto (uma por objeto)
 METODOS = ("OSC", "cadeia", "pipeline")
 
 
@@ -55,8 +52,9 @@ def carregar_sessao(cp, pasta):
     # Sessões antigas (sem o campo) usaram o percurso de 20/10
     marcas_chao.definir_circuito(e.get("circuito") or "20-10")
     # Altura do objeto de teste (piloto.py); sessões antigas usaram a caixa de calibração (6,7 nominal)
-    global ALTURA_TESTE_SESSAO
+    global ALTURA_TESTE_SESSAO, ALTURAS_TESTE_SESSAO
     ALTURA_TESTE_SESSAO = e.get("altura_teste_cm")
+    ALTURAS_TESTE_SESSAO = e.get("alturas_teste_cm") or []
     for tid, d in e["trackers"].items():
         if tid in ("4", "5"):
             cp.dados[tid] = {k: list(v) for k, v in d.items()}
@@ -117,13 +115,16 @@ def analisar(cp, pasta):
     if tronco is not None:  # inclinação em relação à postura da calibração, em graus positivos
         tronco = np.abs(np.asarray(tronco, dtype=float) - cp.pitch_tronco_ref)
     caixa, inclinar, passos = [], [], []
-    altura_ref = ALTURA_TESTE_SESSAO or CAIXA_CM
 
-    # 1. Altura conhecida (caixa ou objeto de teste)
-    for etapa, (cond, pe) in ETAPAS_CAIXA.items():
-        if etapa not in fases:
+    # 1. Altura conhecida (caixa ou objetos de teste do piloto: caixa_reto_ESQ_2 = 2ª altura)
+    for etapa, a, b in cp.fases_sessao:
+        em = re.match(r"^caixa_(reto|incl)_(ESQ|DIR)(?:_(\d+))?$", etapa)
+        if not em:
             continue
-        a, b = fases[etapa]
+        cond, pe = ("reto" if em.group(1) == "reto" else "inclinado"), em.group(2)
+        j = int(em.group(3)) if em.group(3) else None
+        altura_ref = (ALTURAS_TESTE_SESSAO[j - 1] if j and j <= len(ALTURAS_TESTE_SESSAO)
+                      else (ALTURA_TESTE_SESSAO or CAIXA_CM))
         m = (t_s > a + 2.0) & (t_s < b - 0.5)
         linha = {"sessao": nome, "condicao": cond, "pe": pe, "altura_ref_cm": altura_ref,
                  "tronco_graus": float(np.median(tronco[m])) if tronco is not None else np.nan}
@@ -147,15 +148,17 @@ def analisar(cp, pasta):
         tempos, comp, imp, pes, proj = cp.comprimento_pelo_plato(t, d_passo_ap, tempos, comp, imp, pes, proj)
     alturas = {k: np.array(cp.calcular_alturas_passos(t_s, tempos, pes, he, hd)) for k, (he, hd) in met.items()}
     for etapa, a, b in cp.fases_sessao:
-        tipo = re.sub(r"_\d+$", "", etapa)
+        tipo = re.sub(r"_(\d+|[A-Z])$", "", etapa)
+        fim = etapa.rsplit("_", 1)[-1]
+        circ = fim if fim in marcas_chao.CIRCUITOS else marcas_chao.CIRCUITO_ATIVO
         if tipo not in ("caminhada_reta", "caminhada_inclinada"):
             continue
         sel = np.flatnonzero((tempos >= a) & (tempos <= b + 1.0))
-        casados = marcas_chao.casar_com_marcas(pes[sel], comp[sel], tempos[sel])
+        casados = marcas_chao.casar_com_marcas(pes[sel], comp[sel], tempos[sel], percurso=marcas_chao.CIRCUITOS[circ])
         por_tempo = {c["t"]: c for c in casados}
         for i in sel:
             c = por_tempo.get(float(tempos[i]))
-            linha = {"sessao": nome, "circuito": marcas_chao.CIRCUITO_ATIVO,
+            linha = {"sessao": nome, "circuito": circ,
                      "caminhada": tipo.replace("caminhada_", ""), "repeticao": etapa, "t": float(tempos[i]),
                      "pe": str(pes[i]).replace("*", ""), "imu": "*" not in str(pes[i]),
                      "tronco_graus": float(np.interp(tempos[i], t_s, tronco)) if tronco is not None else np.nan,

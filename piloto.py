@@ -1,13 +1,14 @@
 """
-Piloto: coleta guiada por participante com circuitos de marcas e altura conhecida.
+Piloto: coleta única por participante com os três circuitos de marcas e alturas conhecidas.
 
 Baseado no calculo_passo.py (mesmos cálculos), com o protocolo do piloto:
-  1. nome, altura do participante, circuito (A, B ou C) e altura do objeto de teste;
+  1. nome e altura do participante e as alturas dos objetos de teste;
   2. calibração (caixa de 7 cm);
-  3. REPETICOES_RETA caminhadas no circuito com o tronco reto e
-     REPETICOES_INCLINADA com o tronco inclinado;
-  4. pé E e pé D sobre o objeto de teste, com o tronco reto e inclinado.
-Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_circuitoX/.
+  3. nos circuitos A, B e C (mesmo corredor): uma caminhada com o tronco reto e
+     uma com o tronco inclinado em cada;
+  4. pé E e pé D sobre cada objeto de teste com o tronco reto, e também com o
+     tronco inclinado no objeto de 9,5 cm.
+Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/.
 
     uv run python piloto.py
 """
@@ -120,43 +121,62 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
 ROTEIRO_GUIADO = True
-REPETICOES_RETA = 3          # caminhadas no circuito com o tronco reto
-REPETICOES_INCLINADA = 2     # caminhadas no circuito com o tronco inclinado
 TEMPO_CAMINHADA_S = 20
 TEMPO_VOLTA_S = 15
-# Altura conhecida usada como teste em cada circuito (cm). None = perguntar no terminal.
-# A mesma caixa de 7 cm deitada de outro jeito dá 9,5 cm (profundidade) e 14,6 cm (comprimento).
-ALTURAS_TESTE_CM = {"A": None, "B": 9.5, "C": 14.6}
-ALTURA_TESTE_CM = None       # altura do objeto de teste desta coleta (definida no início)
+# Uma coleta só: os três circuitos ficam no mesmo corredor (uma cor de fita para cada).
+# Em cada circuito: uma caminhada com o tronco reto e uma com o tronco inclinado.
+CIRCUITOS_COLETA = ["A", "B", "C"]
+# Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
+# A caixa de 7 cm deitada de outro jeito dá 9,5 cm (profundidade) e 14,6 cm (comprimento).
+ALTURAS_TESTE_PADRAO_CM = [None, 9.5, 14.6]
+ALTURA_COM_TRONCO_INCLINADO = 9.5   # só nesta altura o pé sobe também com o tronco inclinado
+ALTURAS_TESTE_CM = []               # definidas no início da coleta
 
 
-def montar_roteiro(altura_teste_cm=None):
+def montar_roteiro(alturas_cm=None):
     """Lista de (nome da etapa, segundos, instrução) da coleta."""
-    obj = f"objeto de {altura_teste_cm:.1f} cm" if altura_teste_cm else "caixa"
-    r = [("ir_inicio", 15, "Vá até o início do circuito e fique parado, pé D na marca 0")]
-    for k in range(1, REPETICOES_RETA + 1):
-        r.append((f"caminhada_reta_{k}", TEMPO_CAMINHADA_S,
-                  f"CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés ({k}/{REPETICOES_RETA})"))
-        r.append(("voltar_inicio", TEMPO_VOLTA_S, "Volte ao início, pé D na marca 0"))
-    for k in range(1, REPETICOES_INCLINADA + 1):
-        r.append((f"caminhada_inclinada_{k}", TEMPO_CAMINHADA_S,
-                  f"CAMINHE pisando nas MARCAS, tronco INCLINADO (mais de 30°); no fim junte os pés ({k}/{REPETICOES_INCLINADA})"))
-        r.append(("voltar_inicio" if k < REPETICOES_INCLINADA else "ir_caixa",
-                  TEMPO_VOLTA_S if k < REPETICOES_INCLINADA else 25,
-                  "Volte ao início, pé D na marca 0" if k < REPETICOES_INCLINADA
-                  else f"Vá até o {obj} e fique com os dois pés no chão, tronco reto"))
-    r += [
-        ("caixa_reto_ESQ",  7, f"Pé ESQUERDO em cima do {obj}, tronco RETO"),
-        ("chao_1",          6, "Pé de volta ao chão"),
-        ("caixa_reto_DIR",  7, f"Pé DIREITO em cima do {obj}, tronco RETO"),
-        ("chao_2",          6, "Pé de volta ao chão"),
-        ("inclinar",        6, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
-        ("caixa_incl_ESQ",  7, f"Pé ESQUERDO em cima do {obj}, tronco INCLINADO"),
-        ("chao_3",          6, "Pé de volta ao chão, continue inclinado"),
-        ("caixa_incl_DIR",  7, f"Pé DIREITO em cima do {obj}, tronco INCLINADO"),
-        ("chao_4",          6, "Pé de volta ao chão. Pode endireitar o tronco"),
-    ]
+    r = []
+    for c in CIRCUITOS_COLETA:
+        r += [
+            (f"ir_inicio_{c}", TEMPO_VOLTA_S, f"Vá até o início do CIRCUITO {c}, pé D na marca 0"),
+            (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S,
+             f"CIRCUITO {c}: CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés"),
+            (f"voltar_inicio_{c}", TEMPO_VOLTA_S, f"Volte ao início do CIRCUITO {c}, pé D na marca 0"),
+            (f"caminhada_inclinada_{c}", TEMPO_CAMINHADA_S,
+             f"CIRCUITO {c}: CAMINHE pisando nas MARCAS, tronco INCLINADO (mais de 30°); no fim junte os pés"),
+        ]
+    for j, h in enumerate(alturas_cm or [ALTURA_CAIXA_CM], start=1):
+        obj = f"objeto de {h:.1f} cm"
+        r += [
+            (f"ir_objeto_{j}",       15, f"Vá até o {obj} e fique com os dois pés no chão, tronco reto"),
+            (f"caixa_reto_ESQ_{j}",   7, f"Pé ESQUERDO em cima do {obj}, tronco RETO"),
+            (f"chao_reto_ESQ_{j}",    6, "Pé de volta ao chão"),
+            (f"caixa_reto_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}, tronco RETO"),
+            (f"chao_reto_DIR_{j}",    6, "Pé de volta ao chão"),
+        ]
+        if ALTURA_COM_TRONCO_INCLINADO is not None and abs(h - ALTURA_COM_TRONCO_INCLINADO) < 0.05:
+            r += [
+                ("inclinar",              6, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
+                (f"caixa_incl_ESQ_{j}",   7, f"Pé ESQUERDO em cima do {obj}, tronco INCLINADO"),
+                (f"chao_incl_ESQ_{j}",    6, "Pé de volta ao chão, continue inclinado"),
+                (f"caixa_incl_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}, tronco INCLINADO"),
+                (f"chao_incl_DIR_{j}",    6, "Pé de volta ao chão. Pode endireitar o tronco"),
+            ]
     return r
+
+
+def circuito_da_etapa(nome):
+    """'caminhada_reta_B' -> 'B'; etapas sem circuito -> circuito ativo do marcas_chao."""
+    fim = nome.rsplit("_", 1)[-1]
+    return fim if fim in marcas_chao.CIRCUITOS else marcas_chao.CIRCUITO_ATIVO
+
+
+def rotulo_etapa(nome):
+    tronco = "tronco reto" if "reta" in nome else "tronco inclinado" if "inclinada" in nome else ""
+    fim = nome.rsplit("_", 1)[-1]
+    if fim in marcas_chao.CIRCUITOS:
+        return f"Circuito {fim} ({marcas_chao.DESCRICAO.get(fim, '')}), {tronco}"
+    return {"marcha": "Marcha"}.get(nome, f"Caminhada, {tronco}" if tronco else nome)
 
 
 ROTEIRO = montar_roteiro()
@@ -1186,7 +1206,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     # 3. Parâmetros Espaciais da Marcha
     if PARTICIPANTE:
         print(f"\n--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm"
-              f" | circuito {PARTICIPANTE.get('circuito') or marcas_chao.CIRCUITO_ATIVO} ---")
+              f" | circuitos {', '.join(CIRCUITOS_COLETA)} ---")
     print(f"\n--- 3. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
@@ -1229,6 +1249,19 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
             cadencia = 60.0 / np.mean(intervalos)
             print(f"  Cadência estimada:            {cadencia:.1f} passos/min")
 
+        # Por caminhada (os circuitos têm comprimentos diferentes, então a média geral mistura todos)
+        print("\n  Por caminhada (comprimento | altura do passo):")
+        for nome_c in [n for n, _, _ in fases_sessao if n.startswith("caminhada")]:
+            sel_c = sel & np.array([e == nome_c for e in etapas_passos])
+            if not np.any(sel_c):
+                print(f"    {rotulo_etapa(nome_c)}: nenhum passo")
+                continue
+            v = dist_impactos[sel_c] * 100
+            h = clearances_passos_cm[sel_c]
+            cv_c = v.std() / v.mean() * 100 if v.mean() > 0 else 0.0
+            print(f"    {rotulo_etapa(nome_c)}: {v.mean():.1f} ± {v.std():.1f} cm (CV {cv_c:.0f}%, {len(v)} passos)"
+                  f" | {h.mean():.1f} ± {h.std():.1f} cm")
+
         # 4. Biomarcadores Específicos para Doença de Parkinson (Seção 5 da Nota Técnica)
         cv_passo = (desvio_passo / media_passo) * 100.0 if media_passo > 0 else 0.0
         n_microbasia = np.sum(passos_validos < 0.30)
@@ -1244,6 +1277,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         else:
             alerta_cv = "✔ BAIXO (Padrão Regular e Estável)"
         print(f"  Variabilidade do Passo (CV): {cv_passo:5.1f}% [{alerta_cv}]")
+        print("  (o CV e a microbasia desta seção juntam todos os circuitos; o CV de cada caminhada está na seção 3)")
         print(f"  Taxa de Microbasia (< 30cm): {n_microbasia}/{len(passos_validos)} ({pct_microbasia:.1f}%)" + (" ⚠ Indicativo de passos curtos" if pct_microbasia > 30 else ""))
         print(f"  Risco de Arraste (Solado < 2.0cm): {n_baixo_clearance}/{len(clearances_validos)} ({pct_baixo_clearance:.1f}%)" + (" ⚠ Risco de tropeço / Shuffling" if pct_baixo_clearance > 25 else " ✔ Clearance adequado"))
     else:
@@ -1277,7 +1311,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
             tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos
         )):
             escritor.writerow([
-                nome_p, f"{altura_p:.1f}" if altura_p else "", marcas_chao.CIRCUITO_ATIVO, i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
+                nome_p, f"{altura_p:.1f}" if altura_p else "", circuito_da_etapa(etapas_passos[i]) if etapas_passos[i].startswith("caminhada") else "", i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
                 f"{imp_p:.2f}", f"{d_p:.3f}", f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
                 f"{reais[i]:.3f}" if i in reais else "",
                 f"{cl_p:.2f}", f"{tn_p:.2f}", f"{tr_p:.2f}", "NAO" if mascara_validos[i] else "SIM"
@@ -1392,7 +1426,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar.grid(True, alpha=0.3, axis='x')
 
     if PARTICIPANTE:
-        fig.suptitle(f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm · circuito {marcas_chao.CIRCUITO_ATIVO}", fontweight="bold")
+        fig.suptitle(f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm", fontweight="bold")
     plt.tight_layout()
     salvar_figura(fig, "painel_completo.png")
 
@@ -1427,16 +1461,11 @@ def _grupos_marcha(etapas_passos):
     """Índices dos passos de cada caminhada; sem roteiro, todos os passos num grupo só."""
     nomes = []
     for n, _, _ in fases_sessao:
-        if n.startswith("caminhada") and tipo_caminhada(n) not in nomes:
-            nomes.append(tipo_caminhada(n))
+        if n.startswith("caminhada") and n not in nomes:
+            nomes.append(n)
     if not nomes:
         return [("marcha", list(range(len(etapas_passos))))]
-    return [(n, [i for i, e in enumerate(etapas_passos) if e and tipo_caminhada(e) == n]) for n in nomes]
-
-
-def tipo_caminhada(nome):
-    """'caminhada_reta_2' -> 'caminhada_reta' (junta as repetições)."""
-    return re.sub(r"_\d+$", "", nome)
+    return [(n, [i for i, e in enumerate(etapas_passos) if e == n]) for n in nomes]
 
 
 def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_impactos,
@@ -1445,10 +1474,8 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
     import matplotlib.pyplot as plt
     grupos = _grupos_marcha(etapas_passos)
     cor_pe = {"ESQ": "darkorange", "DIR": "green"}
-    titulo_p = (f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm · circuito {marcas_chao.CIRCUITO_ATIVO}"
+    titulo_p = (f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm"
                 if PARTICIPANTE else "")
-    rotulo = {"caminhada_reta": "Caminhadas com o tronco reto", "caminhada_inclinada": "Caminhadas com o tronco inclinado",
-              "marcha": "Marcha"}
 
     def barras(ax, idx, valores, unidade, fator, ref=None):
         x = np.arange(1, len(idx) + 1)
@@ -1481,14 +1508,14 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
     fig, axes = plt.subplots(len(grupos), 1, figsize=(10, 3.4 * len(grupos)), squeeze=False)
     for ax, (nome, idx) in zip(axes[:, 0], grupos):
         if not idx:
-            ax.set_title(f"{rotulo.get(nome, nome)}: nenhum passo detectado"); ax.axis("off"); continue
+            ax.set_title(f"{rotulo_etapa(nome)}: nenhum passo detectado"); ax.axis("off"); continue
         barras(ax, idx, dist_impactos, "Comprimento (cm)", 100.0, reais)
         txt = resumo(idx, dist_impactos, 100.0, "cm")
         if PARTICIPANTE:
             v = [dist_impactos[i] for i in idx if mascara_validos[i]]
             if v:
                 txt += f" | comprimento/altura {np.mean(v) * 100 / PARTICIPANTE['altura_cm']:.2f}"
-        ax.set_title(f"{rotulo.get(nome, nome)}: {txt}", fontsize=10)
+        ax.set_title(f"{rotulo_etapa(nome)}: {txt}", fontsize=10)
     axes[-1, 0].set_xlabel("Passo (pé que pisou)")
     axes[0, 0].plot([], [], color="darkorange", lw=6, label="Pé E")
     axes[0, 0].plot([], [], color="green", lw=6, label="Pé D")
@@ -1503,7 +1530,7 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
     fig, axes = plt.subplots(len(grupos), 2, figsize=(13, 3.4 * len(grupos)), squeeze=False,
                              gridspec_kw={"width_ratios": [1.6, 1]})
     for (ax_t, ax_b), (nome, idx) in zip(axes, grupos):
-        fases_g = [(a, b) for n, a, b in fases_sessao if tipo_caminhada(n) == nome]
+        fases_g = [(a, b) for n, a, b in fases_sessao if n == nome]
         if fases_g:
             m = np.zeros(len(t_passo), dtype=bool)
             for a, b in fases_g:
@@ -1519,7 +1546,7 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
             ax_t.axvline(tempos_impactos[i], color="gray", lw=0.6, ls=":")
         ax_t.set_ylabel("Altura do pé (cm)")
         ax_t.set_xlabel("Tempo (s)")
-        ax_t.set_title(rotulo.get(nome, nome), fontsize=10)
+        ax_t.set_title(rotulo_etapa(nome), fontsize=10)
         ax_t.legend(fontsize=8, loc="upper right")
         ax_t.grid(True, alpha=0.3)
         if idx:
@@ -1892,22 +1919,27 @@ def comparar_com_marcas(tempos, pes, comprimentos):
             continue
         m = (np.asarray(tempos) >= t0) & (np.asarray(tempos) <= t1 + 1.0)
         indices = np.flatnonzero(m)
-        casados = marcas_chao.casar_com_marcas(np.asarray(pes)[m], np.asarray(comprimentos)[m], np.asarray(tempos)[m])
+        circ = circuito_da_etapa(nome)
+        casados = marcas_chao.casar_com_marcas(np.asarray(pes)[m], np.asarray(comprimentos)[m], np.asarray(tempos)[m],
+                                               percurso=marcas_chao.CIRCUITOS[circ])
         for c in casados:
             k = int(indices[np.argmin(np.abs(np.asarray(tempos)[m] - c["t"]))])
             reais[k] = c["real_m"]
-        print(f"\n  📏 Comprimento do passo x marcas no chão ({nome}, circuito {marcas_chao.CIRCUITO_ATIVO}):")
-        print(marcas_chao.resumo_texto(casados))
+        print(f"\n  📏 Comprimento do passo x marcas no chão ({rotulo_etapa(nome)}):")
+        print(marcas_chao.resumo_texto(casados, percurso=marcas_chao.CIRCUITOS[circ]))
     return reais
 
 
-ETAPAS_ALTURA = {"caixa_reto_ESQ": ("reto", "ESQ"), "caixa_reto_DIR": ("reto", "DIR"),
-                 "caixa_incl_ESQ": ("inclinado", "ESQ"), "caixa_incl_DIR": ("inclinado", "DIR")}
+def _etapa_altura(nome):
+    """'caixa_reto_ESQ_2' -> ('reto', 'ESQ', 2); 'caixa_incl_DIR' -> ('inclinado', 'DIR', None)."""
+    m = re.match(r"^caixa_(reto|incl)_(ESQ|DIR)(?:_(\d+))?$", nome)
+    if not m:
+        return None
+    return ("reto" if m.group(1) == "reto" else "inclinado", m.group(2), int(m.group(3)) if m.group(3) else None)
 
 
 def avaliar_altura_conhecida():
-    """Compara a altura medida com o pé sobre o objeto de teste com a altura real."""
-    ref = ALTURA_TESTE_CM or ALTURA_CAIXA_CM
+    """Compara a altura medida com o pé sobre cada objeto de teste com a altura real."""
     s = serie_altura
     if len(s.get("t", [])) == 0:
         return
@@ -1916,35 +1948,37 @@ def avaliar_altura_conhecida():
     tronco = s.get("tronco_graus")
     linhas = []
     for nome, t0, t1 in fases_sessao:
-        if nome not in ETAPAS_ALTURA:
+        info = _etapa_altura(nome)
+        if info is None:
             continue
-        cond, pe = ETAPAS_ALTURA[nome]
+        cond, pe, j = info
+        ref = ALTURAS_TESTE_CM[j - 1] if j and j <= len(ALTURAS_TESTE_CM) else ALTURA_CAIXA_CM
         m = (t > t0 + 2.0) & (t < t1 - 0.5)
         if not np.any(m):
             continue
         dif = float(np.median((hd - he)[m]))
         medido = -dif if pe == "ESQ" else dif
         tr = float(np.median(np.abs(np.asarray(tronco)[m] - pitch_tronco_ref))) if tronco is not None else float("nan")
-        linhas.append((cond, pe, medido, medido - ref, tr))
+        linhas.append((ref, cond, pe, medido, medido - ref, tr))
     if not linhas:
         return
-    print(f"\n  📐 Altura conhecida: objeto de {ref:.1f} cm")
-    for cond, pe, medido, erro, tr in linhas:
-        print(f"    tronco {cond:9s} ({tr:4.0f}°) pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm)")
-    print(f"    erro absoluto médio: {np.mean([abs(l[3]) for l in linhas]):.1f} cm")
+    print("\n  📐 Alturas conhecidas")
+    for ref, cond, pe, medido, erro, tr in linhas:
+        print(f"    objeto {ref:5.1f} cm | tronco {cond:9s} ({tr:3.0f}°) | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm)")
+    print(f"    erro absoluto médio: {np.mean([abs(l[4]) for l in linhas]):.1f} cm")
     arq = os.path.join(PASTA_COLETA, "altura_conhecida.csv")
     with open(arq, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["Altura_real_cm", "Tronco", "Tronco_graus", "Pe", "Altura_medida_cm", "Erro_cm"])
-        for cond, pe, medido, erro, tr in linhas:
+        for ref, cond, pe, medido, erro, tr in linhas:
             w.writerow([f"{ref:.2f}", cond, f"{tr:.1f}", pe, f"{medido:.2f}", f"{erro:.2f}"])
 
 
-def definir_altura_teste(altura_cm):
-    """Guarda a altura do objeto de teste e refaz o roteiro com ela."""
-    global ALTURA_TESTE_CM, ROTEIRO
-    ALTURA_TESTE_CM = altura_cm
-    ROTEIRO = montar_roteiro(altura_cm)
+def definir_alturas_teste(alturas_cm):
+    """Guarda as alturas dos objetos de teste e refaz o roteiro com elas."""
+    global ALTURAS_TESTE_CM, ROTEIRO
+    ALTURAS_TESTE_CM = list(alturas_cm)
+    ROTEIRO = montar_roteiro(ALTURAS_TESTE_CM)
 
 
 def definir_pasta_saida(pasta):
@@ -1994,10 +2028,10 @@ def salvar_dados_brutos():
                 w.writerow(linha)
         entrada = {
             "participante": PARTICIPANTE,
-            "circuito": marcas_chao.CIRCUITO_ATIVO,
+            "circuitos": CIRCUITOS_COLETA,
+            "percursos_marcas": {c: marcas_chao.CIRCUITOS[c] for c in CIRCUITOS_COLETA},
             "altura_caixa_calibracao_cm": ALTURA_CAIXA_CM,
-            "altura_teste_cm": ALTURA_TESTE_CM,
-            "percurso_marcas": marcas_chao.PERCURSO_MARCAS,
+            "alturas_teste_cm": ALTURAS_TESTE_CM,
             "modo_altura": MODO_ALTURA,
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
@@ -2028,10 +2062,9 @@ def main():
     # 0. Cadastro do participante e pasta da coleta
     if PEDIR_PARTICIPANTE:
         PARTICIPANTE = cadastro.pedir_participante()
-        PARTICIPANTE["circuito"] = cadastro.pedir_circuito(marcas_chao.CIRCUITOS, marcas_chao.DESCRICAO)
-        marcas_chao.definir_circuito(PARTICIPANTE["circuito"])
-        PARTICIPANTE["altura_teste_cm"] = cadastro.pedir_altura_teste(ALTURAS_TESTE_CM.get(PARTICIPANTE["circuito"]))
-        definir_altura_teste(PARTICIPANTE["altura_teste_cm"])
+        print("   Alturas dos objetos de teste:")
+        PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h) for h in ALTURAS_TESTE_PADRAO_CM]
+        definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
         pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
         definir_pasta_saida(pasta)
         print(f"   Os arquivos desta coleta vão para {pasta}\n")
