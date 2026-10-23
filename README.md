@@ -63,8 +63,21 @@ Combina a precisão inercial das **IMUs físicas (Porta 21110)** para identifica
 - **Timing Preciso via IMU:** Identifica o instante exato em que cada pé colide com o chão através dos picos de aceleração linear das IMUs dos pés.
 - **Comprimento do Passo:** Amostra a distância horizontal Euclidiana entre os pés no exato milissegundo do contato inicial.
 - **Clearance / Altura do Passo:** Mede a elevação vertical pelo pé de apoio dinâmico ($\min(Y_e, Y_d)$).
-- **Postura do Tronco & Atenção Visual:** Inclinação do peito (Pitch) e orientação do olhar/cabeça.
-- **Relatório e Gráficos:** Gera tabela detalhada passo a passo, salva em `dados/resultado_completo_marcha.csv` e plota gráficos sincronizados.
+- **Postura do Tronco:** inclinação do peito (Pitch).
+- **Cadastro do participante:** antes de tudo, o terminal pede o nome e a altura (cm) do participante. Cada coleta vai para `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/`, e `dados/participantes/<Nome>/participante.json` guarda o cadastro e a lista de coletas.
+- **Relatório e Gráficos:** as estatísticas da marcha usam só os passos das caminhadas do roteiro.
+
+**Arquivos de cada coleta** (em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/`):
+- `comprimento_passo.png`: comprimento de cada passo nas caminhadas reta e inclinada, por pé, com a marca do chão quando o passo casou com ela;
+- `altura_passo.png`: altura dos pés ao longo de cada caminhada e a altura máxima de cada passo;
+- `painel_completo.png`: projeção anteroposterior, aceleração das IMUs, altura dos pés, quadril, tronco e barras por passo;
+- `resultado_completo_marcha.csv`: um passo por linha, com participante, altura, etapa do roteiro, comprimento (e comprimento/altura), comprimento real pelas marcas, altura do passo e tronco;
+- `dados_brutos_sessao.csv`: altura de cada pé ao longo do tempo (OSC, cadeia, pipeline) e o tronco;
+- `dados_brutos_entrada.json` e `fases_sessao.csv`: entradas brutas e etapas, para reprocessar com o `analisar_sessoes.py`;
+- `relatorio.txt`: o relatório que aparece no terminal;
+- `participante.json`: nome, altura e data da coleta.
+
+Para pular o cadastro (testes), mude `PEDIR_PARTICIPANTE = False`: os arquivos voltam para `dados/`. Com `MOSTRAR_GRAFICOS = False` os gráficos só são salvos, sem abrir janelas.
 
 **Como rodar:**
 ```powershell
@@ -128,11 +141,11 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 O comprimento do passo é conferido com um percurso de marcas no chão (`PERCURSO_MARCAS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). Nas duas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
 
-Cada coleta também é copiada para `dados/sessoes/AAAAMMDD_HHMMSS/`. Depois de algumas sessões:
+Cada coleta fica em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/` (as coletas antigas estão em `dados/sessoes/`). Depois de algumas sessões:
 
 ```powershell
-uv run python analisar_sessoes.py            # todas as pastas em dados/sessoes/
-uv run python analisar_sessoes.py dados/sessoes/20261021_1000 dados/sessoes/20261021_1030
+uv run python analisar_sessoes.py            # todas as pastas em dados/participantes/ e dados/sessoes/
+uv run python analisar_sessoes.py dados/participantes/Joao_Silva/20261023_1000 dados/participantes/Joao_Silva/20261023_1030
 ```
 
 O script recalcula tudo a partir dos dados brutos salvos e grava em `dados/analise_sessoes/`:

@@ -1,7 +1,7 @@
 """
 Junta várias sessões guiadas do calculo_passo.py e resume os resultados.
 
-Cada sessão fica em dados/sessoes/AAAAMMDD_HHMMSS/ (o calculo_passo.py copia
+Cada sessão fica em dados/participantes/<Nome>/AAAAMMDD_HHMMSS/ (antes: dados/sessoes/; o calculo_passo.py grava
 sozinho no fim). O script reprocessa todas com o código atual e mede, para
 cada método (OSC, cadeia, pipeline):
 
@@ -13,7 +13,7 @@ cada método (OSC, cadeia, pipeline):
        os dois (Bland-Altman).
 
 Uso:
-    uv run python analisar_sessoes.py                 # todas em dados/sessoes/
+    uv run python analisar_sessoes.py                 # todas em dados/participantes/ e dados/sessoes/
     uv run python analisar_sessoes.py pasta1 pasta2   # só essas
 
 Saída em dados/analise_sessoes/: caixa.csv, inclinar.csv, passos.csv,
@@ -268,10 +268,12 @@ def grafico(caixa, passos, caminho):
 
 
 def main():
-    pastas = sys.argv[1:] or sorted(glob.glob(os.path.join("dados", "sessoes", "*")))
+    pastas = sys.argv[1:] or sorted(
+        glob.glob(os.path.join("dados", "sessoes", "*"))
+        + [p for p in glob.glob(os.path.join("dados", "participantes", "*", "*")) if os.path.isdir(p)])
     pastas = [p for p in pastas if os.path.exists(os.path.join(p, "dados_brutos_entrada.json"))]
     if not pastas:
-        sys.exit("Nenhuma sessão encontrada em dados/sessoes/.")
+        sys.exit("Nenhuma sessão encontrada em dados/sessoes/ nem em dados/participantes/.")
     cp = _importar_calculo()
     caixa, inclinar, passos = [], [], []
     for p in pastas:

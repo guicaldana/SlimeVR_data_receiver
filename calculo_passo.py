@@ -21,6 +21,7 @@ import threading
 import numpy as np
 import cadeia_pernas
 import marcas_chao
+import participante as cadastro
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import ThreadingOSCUDPServer
 
@@ -129,6 +130,13 @@ NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
 NOME_ARQUIVO_BRUTO = os.path.join("dados", "dados_brutos_sessao.csv")
 NOME_ARQUIVO_ENTRADA = os.path.join("dados", "dados_brutos_entrada.json")
 NOME_ARQUIVO_FASES = os.path.join("dados", "fases_sessao.csv")
+NOME_ARQUIVO_RELATORIO = os.path.join("dados", "relatorio.txt")
+# Antes do experimento o programa pede nome e altura do participante e grava tudo
+# em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/ (ver participante.py).
+PEDIR_PARTICIPANTE = True
+MOSTRAR_GRAFICOS = True       # abre as janelas dos gráficos no fim (os PNG são salvos de qualquer jeito)
+PASTA_COLETA = "dados"
+PARTICIPANTE = None           # {"nome": ..., "altura_cm": ...}
 INTERVALO_FEEDBACK = 0.20     # Atualização do terminal 5 vezes por segundo
 # ==============================================================
 
@@ -1009,22 +1017,30 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
                               alt_quadril_cm, posturas,
                               tempos_impactos, dist_impactos, impactos_ms2,
                               clearances_passos_cm, tornozelos_passos_cm,
-                              pes_passos, projecoes_ap, mascara_validos):
+                              pes_passos, projecoes_ap, mascara_validos, reais_m=None):
     print("\n\n" + "=" * 90)
     print("      RELATÓRIO CLÍNICO & BIOMECÂNICO: ARQUITETURA DE FUSÃO SOLARXR + SLIMEVR")
     print("=" * 90)
 
     n_total = len(dist_impactos)
     n_outliers = np.sum(~mascara_validos)
-    passos_validos = dist_impactos[mascara_validos]
-    tempos_validos = tempos_impactos[mascara_validos]
-    clearances_validos = clearances_passos_cm[mascara_validos]
-    tornozelos_validos = tornozelos_passos_cm[mascara_validos]
-    pes_validos = pes_passos[mascara_validos]
+    # Com o roteiro guiado, as estatísticas da marcha usam só os passos das caminhadas
+    etapas_passos = [etapa_no_instante(t_p) for t_p in tempos_impactos]
+    na_marcha = np.array([e.startswith("caminhada") for e in etapas_passos])
+    if not np.any(na_marcha):
+        na_marcha = np.ones(n_total, dtype=bool)
+    sel = mascara_validos & na_marcha
+    passos_validos = dist_impactos[sel]
+    tempos_validos = tempos_impactos[sel]
+    clearances_validos = clearances_passos_cm[sel]
+    tornozelos_validos = tornozelos_passos_cm[sel]
+    pes_validos = pes_passos[sel]
 
     duracao = t_passo[-1]
     print(f"Duração da sessão:       {duracao:.1f} s")
-    print(f"Passos detectados:       {n_total} (Válidos: {len(passos_validos)} | Outliers MAD: {n_outliers})")
+    print(f"Passos detectados:       {n_total} (Outliers MAD: {n_outliers})")
+    if not np.all(na_marcha):
+        print(f"Passos nas caminhadas:   {int(np.sum(na_marcha))} (válidos: {len(passos_validos)}); as estatísticas abaixo usam só esses")
 
     # 1. Estatística Postural
     dt_amostra = np.mean(np.diff(t_passo)) if len(t_passo) > 1 else 0.01
@@ -1052,22 +1068,10 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     else:
         tronco_nos_passos = [0.0] * n_total
 
-    tem_cabeca = len(dados["cabeca"]["t"]) >= 10
-    cabeca_nos_passos = []
-    if tem_cabeca:
-        t_cabeca = np.array(dados["cabeca"]["t"])
-        pitch_cabeca = np.array(dados["cabeca"]["pitch"])
-        cabeca_nos_passos = np.interp(tempos_impactos, t_cabeca, pitch_cabeca)
-        dt_c = np.mean(np.diff(t_cabeca)) if len(t_cabeca) > 1 else 0.02
-        t_neutro = np.sum((pitch_cabeca >= LIMIAR_BAIXO) & (pitch_cabeca <= LIMIAR_CIMA)) * dt_c
-        pct_neutro = (t_neutro / duracao) * 100 if duracao > 0 else 0
-        print(f"\n--- 3. Atenção Visual e Orientação da Cabeça (VMC) ---")
-        print(f"  Inclinação média: {np.mean(pitch_cabeca):+.1f}° | Olhar Frente: {pct_neutro:.1f}% do tempo")
-    else:
-        cabeca_nos_passos = [0.0] * n_total
-
     # 3. Parâmetros Espaciais da Marcha
-    print(f"\n--- 4. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
+    if PARTICIPANTE:
+        print(f"\n--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm ---")
+    print(f"\n--- 3. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
         desvio_passo = np.std(passos_validos)
@@ -1078,6 +1082,8 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         media_base = np.mean(larg_base_m) * 100.0
 
         print(f"  Comprimento médio da passada: {media_passo:.3f} m (± {desvio_passo:.3f} m)")
+        if PARTICIPANTE:
+            print(f"  Comprimento / altura:         {media_passo * 100 / PARTICIPANTE['altura_cm']:.2f}")
         print(f"  Largura média da base (X):    {media_base:.1f} cm (Base de suporte lateral)")
         print(f"  Clearance Real do Solado:     {media_clear:.1f} cm (± {desvio_clear:.1f} cm) [Folga solo-sapato: 1.5 - 4.5 cm]")
         print(f"  Elevação Tornozelo / Flexão:  {media_torn:.1f} cm (± {desvio_torn:.1f} cm) [Encurtamento joelho: 10 - 18 cm]")
@@ -1099,8 +1105,12 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
             simetria = (1.0 - abs(d_e - d_d) / ((d_e + d_d) / 2.0)) * 100.0
             print(f"  Índice de Simetria do Passo:  {simetria:.1f}%")
 
-        if len(tempos_validos) >= 2:
-            cadencia = 60.0 / np.mean(np.diff(tempos_validos))
+        # Cadência só entre passos seguidos da mesma caminhada (não conta a pausa entre elas)
+        etapas_sel = np.array(etapas_passos)[sel]
+        intervalos = [b - a for a, b, ea, eb in zip(tempos_validos[:-1], tempos_validos[1:], etapas_sel[:-1], etapas_sel[1:])
+                      if ea == eb]
+        if intervalos:
+            cadencia = 60.0 / np.mean(intervalos)
             print(f"  Cadência estimada:            {cadencia:.1f} passos/min")
 
         # 4. Biomarcadores Específicos para Doença de Parkinson (Seção 5 da Nota Técnica)
@@ -1110,7 +1120,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         n_baixo_clearance = np.sum(clearances_validos < 2.0)
         pct_baixo_clearance = (n_baixo_clearance / len(clearances_validos)) * 100.0
 
-        print(f"\n--- 5. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---")
+        print(f"\n--- 4. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---")
         if cv_passo > 10.0:
             alerta_cv = "⚠ ALTO (Elevado Risco de Quedas)"
         elif cv_passo >= 6.0:
@@ -1125,39 +1135,43 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
 
     # 5. Tabela Integrada
     print("\n--- Tabela Integrada Passo a Passo (Sincronia Heel-Strike SolarXR + Projeção Anteroposterior) ---")
-    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Solado(cm)':<12} {'Tornoz(cm)':<12} {'Tronco':<10} {'Olhar':<14} {'Status'}")
+    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Etapa':<20} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Solado(cm)':<12} {'Tornoz(cm)':<12} {'Tronco':<10} {'Status'}")
     print("-" * 110)
-    for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p, cb_p) in enumerate(zip(
-        tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
+    for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p) in enumerate(zip(
+        tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos
     )):
         valido = mascara_validos[i]
         status = "Válido" if valido else "⚠ Outlier"
-        _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
         tr_str = f"{tr_p:+.1f}°" if tem_peito else "N/A"
-        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {imp_p:<15.1f} {d_p:<13.3f} {cl_p:<12.1f} {tn_p:<12.1f} {tr_str:<10} {olhar_lbl:<14} {status}")
+        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {etapas_passos[i]:<20} {imp_p:<15.1f} {d_p:<13.3f} {cl_p:<12.1f} {tn_p:<12.1f} {tr_str:<10} {status}")
     print("=" * 110)
 
     # 6. Salva CSV Unificado
     with open(NOME_ARQUIVO_PASSOS, mode='w', newline='', encoding="utf-8") as f:
         escritor = csv.writer(f)
+        nome_p = PARTICIPANTE["nome"] if PARTICIPANTE else ""
+        altura_p = PARTICIPANTE["altura_cm"] if PARTICIPANTE else None
+        reais = reais_m or {}
         escritor.writerow([
-            "Passo", "Tempo_HeelStrike_s", "Pe_Impacto", "Impacto_IMU_ms2", "Comprimento_m",
-            "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Cabeca_Pitch_graus", "Estado_Olhar", "Outlier"
+            "Participante", "Altura_participante_cm", "Passo", "Etapa", "Tempo_HeelStrike_s", "Pe_Impacto",
+            "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
+            "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Outlier"
         ])
-        for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p, cb_p) in enumerate(zip(
-            tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
+        for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p) in enumerate(zip(
+            tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos
         )):
-            _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
             escritor.writerow([
-                i+1, f"{t_p:.3f}", pe_p, f"{imp_p:.2f}", f"{d_p:.3f}", f"{cl_p:.2f}", f"{tn_p:.2f}",
-                f"{tr_p:.2f}", f"{cb_p:.2f}", olhar_lbl, "NAO" if mascara_validos[i] else "SIM"
+                nome_p, f"{altura_p:.1f}" if altura_p else "", i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
+                f"{imp_p:.2f}", f"{d_p:.3f}", f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
+                f"{reais[i]:.3f}" if i in reais else "",
+                f"{cl_p:.2f}", f"{tn_p:.2f}", f"{tr_p:.2f}", "NAO" if mascara_validos[i] else "SIM"
             ])
     print(f"\nResultados consolidados salvos em '{NOME_ARQUIVO_PASSOS}'.")
 
     # ================= GRÁFICOS INTEGRADOS =================
     import matplotlib.pyplot as plt
     tem_imu_plot = len(dados_imu["ESQ"]["t"]) > 20 or len(dados_imu["DIR"]["t"]) > 20
-    painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + (1 if tem_cabeca else 0) + 1
+    painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + 1
     total_subplots = 3 + painéis_extras
     fig, axes = plt.subplots(total_subplots, 1, figsize=(14, 2.5 * total_subplots), sharex=False)
 
@@ -1245,21 +1259,6 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         ax_tr.grid(True, alpha=0.3)
         idx_ax += 1
 
-    # Painel 6: Cabeça / Olhar
-    if tem_cabeca:
-        ax_cb = axes[idx_ax]
-        t_cb = np.array(dados["cabeca"]["t"])
-        pitch_cb = np.array(dados["cabeca"]["pitch"])
-        ax_cb.plot(t_cb, pitch_cb, color='black', linewidth=1.2, label='Olhar / Cabeça (Pitch)')
-        ax_cb.axhline(0, color='gray', linestyle=':')
-        ax_cb.axhspan(LIMIAR_BAIXO, LIMIAR_CIMA, color='mediumseagreen', alpha=0.15, label='Frente')
-        ax_cb.axhspan(-90, LIMIAR_MUITO_BAIXO, color='tomato', alpha=0.20, label='Chão')
-        ax_cb.set_ylabel('Cabeça (°)')
-        ax_cb.set_title('6. Atenção Visual (Inclinação da Cabeça)', fontweight="bold")
-        ax_cb.legend(loc='upper right', fontsize=8)
-        ax_cb.grid(True, alpha=0.3)
-        idx_ax += 1
-
     # Painel 7: Barras Passo a Passo
     ax_bar = axes[idx_ax]
     x_indices = np.arange(1, n_total + 1)
@@ -1268,7 +1267,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar.axhline(0.30, color='goldenrod', linestyle='--', alpha=0.8, label='Limiar Microbasia (30 cm)')
     ax_bar.set_ylabel('Comprimento (m)', color='steelblue')
     ax_bar.set_xlabel('Número do Passo')
-    ax_bar.set_title('7. Comprimento de Passo vs Altura Real com Biomarcadores de Parkinson', fontweight="bold")
+    ax_bar.set_title('6. Comprimento de Passo vs Altura Real com Biomarcadores de Parkinson', fontweight="bold")
     ax_bar.set_xticks(x_indices)
 
     ax_bar_twin = ax_bar.twinx()
@@ -1276,8 +1275,131 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar_twin.set_ylabel('Clearance Solado (cm)', color='coral')
     ax_bar.grid(True, alpha=0.3, axis='x')
 
+    if PARTICIPANTE:
+        fig.suptitle(f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm", fontweight="bold")
     plt.tight_layout()
-    plt.show()
+    salvar_figura(fig, "painel_completo.png")
+
+    graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_impactos,
+                    clearances_passos_cm, pes_passos, mascara_validos, etapas_passos, reais)
+
+
+def salvar_figura(fig, nome):
+    arq = os.path.join(PASTA_COLETA, nome)
+    try:
+        fig.savefig(arq, dpi=130)
+        print(f"Gráfico salvo em {arq}")
+    except Exception as e:
+        print(f"Não foi possível salvar {arq}: {e}")
+
+
+def etapa_no_instante(t):
+    """Nome da etapa do roteiro em que o instante t caiu ('' sem roteiro).
+
+    Um passo até 1 s depois do fim de uma caminhada ainda conta para ela
+    (o último passo costuma fechar logo depois do aviso)."""
+    for nome, t0, t1 in fases_sessao:
+        if t0 <= t <= t1:
+            return nome
+    for nome, t0, t1 in fases_sessao:
+        if nome.startswith("caminhada") and t1 < t <= t1 + 1.0:
+            return nome
+    return ""
+
+
+def _grupos_marcha(etapas_passos):
+    """Índices dos passos de cada caminhada; sem roteiro, todos os passos num grupo só."""
+    nomes = [n for n, _, _ in fases_sessao if n.startswith("caminhada")]
+    if not nomes:
+        return [("marcha", list(range(len(etapas_passos))))]
+    return [(n, [i for i, e in enumerate(etapas_passos) if e == n]) for n in nomes]
+
+
+def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_impactos,
+                    clearances_passos_cm, pes_passos, mascara_validos, etapas_passos, reais):
+    """Gráficos de comprimento e altura do passo, só com os passos das caminhadas."""
+    import matplotlib.pyplot as plt
+    grupos = _grupos_marcha(etapas_passos)
+    cor_pe = {"ESQ": "darkorange", "DIR": "green"}
+    titulo_p = (f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm"
+                if PARTICIPANTE else "")
+    rotulo = {"caminhada_reta": "Caminhada reta", "caminhada_inclinada": "Caminhada inclinada", "marcha": "Marcha"}
+
+    def barras(ax, idx, valores, unidade, fator, ref=None):
+        x = np.arange(1, len(idx) + 1)
+        for k, i in enumerate(idx):
+            lado = "DIR" if "DIR" in pes_passos[i] else "ESQ"
+            ok = bool(mascara_validos[i])
+            ax.bar(x[k], valores[i] * fator, color=cor_pe[lado], alpha=0.9 if ok else 0.3,
+                   hatch=None if ok else "//", edgecolor="k" if not ok else None, linewidth=0.5)
+            ax.text(x[k], valores[i] * fator, f"{valores[i] * fator:.0f}", ha="center", va="bottom", fontsize=8)
+            if ref is not None and i in ref:
+                ax.plot([x[k] - 0.4, x[k] + 0.4], [ref[i] * fator] * 2, color="k", lw=2)
+        ax.set_xticks(x, [f"{k}\n{'D' if 'DIR' in pes_passos[i] else 'E'}" for k, i in zip(x, idx)])
+        ax.set_ylabel(unidade)
+        ax.grid(True, alpha=0.3, axis="y")
+
+    def resumo(idx, valores, fator, un):
+        v = np.array([valores[i] for i in idx if mascara_validos[i]]) * fator
+        if len(v) == 0:
+            return "sem passos válidos"
+        txt = f"média {v.mean():.1f} ± {v.std():.1f} {un} ({len(v)} passos)"
+        for lado, ch in (("ESQ", "E"), ("DIR", "D")):
+            vl = np.array([valores[i] for i in idx if mascara_validos[i] and lado in pes_passos[i]]) * fator
+            if len(vl):
+                txt += f" | {ch} {vl.mean():.1f}"
+        return txt
+
+    # Comprimento do passo
+    fig, axes = plt.subplots(len(grupos), 1, figsize=(10, 3.4 * len(grupos)), squeeze=False)
+    for ax, (nome, idx) in zip(axes[:, 0], grupos):
+        if not idx:
+            ax.set_title(f"{rotulo.get(nome, nome)}: nenhum passo detectado"); ax.axis("off"); continue
+        barras(ax, idx, dist_impactos, "Comprimento (cm)", 100.0, reais)
+        txt = resumo(idx, dist_impactos, 100.0, "cm")
+        if PARTICIPANTE:
+            v = [dist_impactos[i] for i in idx if mascara_validos[i]]
+            if v:
+                txt += f" | comprimento/altura {np.mean(v) * 100 / PARTICIPANTE['altura_cm']:.2f}"
+        ax.set_title(f"{rotulo.get(nome, nome)}: {txt}", fontsize=10)
+    axes[-1, 0].set_xlabel("Passo (pé que pisou)")
+    axes[0, 0].plot([], [], color="darkorange", lw=6, label="Pé E")
+    axes[0, 0].plot([], [], color="green", lw=6, label="Pé D")
+    if reais:
+        axes[0, 0].plot([], [], color="k", lw=2, label="Marca no chão")
+    axes[0, 0].legend(fontsize=8, loc="upper right", ncol=3)
+    fig.suptitle("Comprimento do passo" + (f" · {titulo_p}" if titulo_p else ""), fontweight="bold")
+    fig.tight_layout()
+    salvar_figura(fig, "comprimento_passo.png")
+
+    # Altura do passo: série no tempo + barras por passo
+    fig, axes = plt.subplots(len(grupos), 2, figsize=(13, 3.4 * len(grupos)), squeeze=False,
+                             gridspec_kw={"width_ratios": [1.6, 1]})
+    for (ax_t, ax_b), (nome, idx) in zip(axes, grupos):
+        fase = [(a, b) for n, a, b in fases_sessao if n == nome]
+        if fase:
+            a, b = fase[0]
+            m = (t_passo >= a) & (t_passo <= b + 1.0)
+        else:
+            m = np.ones(len(t_passo), dtype=bool)
+        ax_t.plot(t_passo[m], clear_esq_cm[m], color="darkorange", lw=1.3, label="Pé E")
+        ax_t.plot(t_passo[m], clear_dir_cm[m], color="green", lw=1.3, label="Pé D")
+        for i in idx:
+            ax_t.axvline(tempos_impactos[i], color="gray", lw=0.6, ls=":")
+        ax_t.set_ylabel("Altura do pé (cm)")
+        ax_t.set_xlabel("Tempo (s)")
+        ax_t.set_title(rotulo.get(nome, nome), fontsize=10)
+        ax_t.legend(fontsize=8, loc="upper right")
+        ax_t.grid(True, alpha=0.3)
+        if idx:
+            barras(ax_b, idx, clearances_passos_cm, "Altura máxima (cm)", 1.0)
+            ax_b.set_title(resumo(idx, clearances_passos_cm, 1.0, "cm"), fontsize=9)
+            ax_b.set_xlabel("Passo (pé que pisou)")
+        else:
+            ax_b.axis("off")
+    fig.suptitle("Altura do passo" + (f" · {titulo_p}" if titulo_p else ""), fontweight="bold")
+    fig.tight_layout()
+    salvar_figura(fig, "altura_passo.png")
 
 
 # ----------------- EXECUÇÃO PRINCIPAL -----------------
@@ -1630,30 +1752,51 @@ def salvar_fases():
 
 
 def comparar_com_marcas(tempos, pes, comprimentos):
-    """Compara o comprimento de cada passo das caminhadas com as marcas do chão."""
+    """Compara o comprimento de cada passo das caminhadas com as marcas do chão.
+
+    Retorna {índice do passo: comprimento real em m} dos passos que casaram."""
+    reais = {}
     for nome, t0, t1 in fases_sessao:
         if not nome.startswith("caminhada"):
             continue
         m = (np.asarray(tempos) >= t0) & (np.asarray(tempos) <= t1 + 1.0)
+        indices = np.flatnonzero(m)
         casados = marcas_chao.casar_com_marcas(np.asarray(pes)[m], np.asarray(comprimentos)[m], np.asarray(tempos)[m])
+        for c in casados:
+            k = int(indices[np.argmin(np.abs(np.asarray(tempos)[m] - c["t"]))])
+            reais[k] = c["real_m"]
         print(f"\n  📏 Comprimento do passo x marcas no chão ({nome}):")
         print(marcas_chao.resumo_texto(casados))
+    return reais
 
 
-def guardar_copia_sessao():
-    """Copia os arquivos desta sessão para dados/sessoes/AAAAMMDD_HHMMSS (para juntar várias depois)."""
-    import shutil
-    pasta = os.path.join("dados", "sessoes", time.strftime("%Y%m%d_%H%M%S"))
-    try:
-        os.makedirs(pasta, exist_ok=True)
-        for arq in (NOME_ARQUIVO_FASES, NOME_ARQUIVO_BRUTO, NOME_ARQUIVO_ENTRADA, NOME_ARQUIVO_PASSOS):
-            if os.path.exists(arq):
-                shutil.copy2(arq, pasta)
-        print(f"Cópia da sessão em {pasta}")
-        return pasta
-    except Exception as e:
-        print(f"Não foi possível copiar a sessão: {e}")
-        return None
+def definir_pasta_saida(pasta):
+    """Faz todos os arquivos da coleta irem para a pasta do participante."""
+    global PASTA_COLETA, NOME_ARQUIVO_PASSOS, NOME_ARQUIVO_BRUTO, NOME_ARQUIVO_ENTRADA
+    global NOME_ARQUIVO_FASES, NOME_ARQUIVO_RELATORIO
+    PASTA_COLETA = pasta
+    NOME_ARQUIVO_PASSOS = os.path.join(pasta, "resultado_completo_marcha.csv")
+    NOME_ARQUIVO_BRUTO = os.path.join(pasta, "dados_brutos_sessao.csv")
+    NOME_ARQUIVO_ENTRADA = os.path.join(pasta, "dados_brutos_entrada.json")
+    NOME_ARQUIVO_FASES = os.path.join(pasta, "fases_sessao.csv")
+    NOME_ARQUIVO_RELATORIO = os.path.join(pasta, "relatorio.txt")
+
+
+class _Tee:
+    """Escreve no terminal e num arquivo ao mesmo tempo (para guardar o relatório)."""
+    def __init__(self, arq, terminal):
+        self.arq, self.terminal = arq, terminal
+
+    def write(self, s):
+        self.terminal.write(s)
+        try:
+            self.arq.write(s)
+        except Exception:
+            pass
+
+    def flush(self):
+        self.terminal.flush()
+        self.arq.flush()
 
 
 def salvar_dados_brutos():
@@ -1673,6 +1816,7 @@ def salvar_dados_brutos():
                     linha.append("" if v is None else f"{float(v[i]):.4f}")
                 w.writerow(linha)
         entrada = {
+            "participante": PARTICIPANTE,
             "modo_altura": MODO_ALTURA,
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
@@ -1699,7 +1843,13 @@ def salvar_dados_brutos():
 
 
 def main():
-    global rodando
+    global rodando, PARTICIPANTE
+    # 0. Cadastro do participante e pasta da coleta
+    if PEDIR_PARTICIPANTE:
+        PARTICIPANTE = cadastro.pedir_participante()
+        pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
+        definir_pasta_saida(pasta)
+        print(f"   Os arquivos desta coleta vão para {pasta}\n")
     # 1. Servidores OSC (Porta 9000) e VMC (Porta 39539)
     t_osc = threading.Thread(target=rodar_servidor, args=(PORTA_OSC, osc_handler_9000), daemon=True)
     t_vmc = threading.Thread(target=rodar_servidor, args=(PORTA_VMC, vmc_handler_39539), daemon=True)
@@ -1762,51 +1912,65 @@ def main():
             except Exception:
                 pass
 
-        d_esq = dados[TORNOZELO_ESQ]
-        d_dir = dados[TORNOZELO_DIR]
-        d_quad = dados[TRACKER_QUADRIL]
-        d_coxa_e = dados[TRACKER_COXA_ESQ]
-        d_coxa_d = dados[TRACKER_COXA_DIR]
+        processar_coleta()
 
-        if len(d_esq["t"]) < 20 or len(d_dir["t"]) < 20:
-            print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
-            return
 
-        t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
-            d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
-        )
+def processar_coleta():
+    """Calcula os passos, salva os arquivos e gera o relatório e os gráficos da coleta."""
+    d_esq = dados[TORNOZELO_ESQ]
+    d_dir = dados[TORNOZELO_DIR]
+    d_quad = dados[TRACKER_QUADRIL]
+    d_coxa_e = dados[TRACKER_COXA_ESQ]
+    d_coxa_d = dados[TRACKER_COXA_DIR]
 
-        salvar_fases()
-        salvar_dados_brutos()
-        pasta_sessao = guardar_copia_sessao()
+    if len(d_esq["t"]) < 20 or len(d_dir["t"]) < 20:
+        print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
+        return
 
-        tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
-            t_passo, d_passo_ap, taxa
-        )
+    t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
+        d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
+    )
 
-        if len(dist_impactos) == 0:
-            print("Nenhum passo com a amplitude configurada foi detectado.")
-            return
+    salvar_fases()
+    salvar_dados_brutos()
 
-        clearances_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, clear_esq_cm, clear_dir_cm)
+    tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
+        t_passo, d_passo_ap, taxa
+    )
+
+    if len(dist_impactos) == 0:
+        print("Nenhum passo com a amplitude configurada foi detectado.")
+        return
+
+    clearances_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, clear_esq_cm, clear_dir_cm)
+    tornozelos_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, torn_esq_cm, torn_dir_cm)
+    mascara_validos = remover_outliers(dist_impactos)
+
+    terminal = sys.stdout
+    with open(NOME_ARQUIVO_RELATORIO, "w", encoding="utf-8") as frel:
+        sys.stdout = _Tee(frel, terminal)
         try:
-            comparar_com_marcas(tempos_impactos, pes_passos, dist_impactos)
-        except Exception as e:
-            print(f"Não foi possível comparar com as marcas: {e}")
-        tornozelos_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, torn_esq_cm, torn_dir_cm)
-        mascara_validos = remover_outliers(dist_impactos)
+            reais = {}
+            try:
+                reais = comparar_com_marcas(tempos_impactos, pes_passos, dist_impactos)
+            except Exception as e:
+                print(f"Não foi possível comparar com as marcas: {e}")
+            gerar_relatorio_e_graficos(
+                t_passo, d_passo_ap, larg_base_m,
+                clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm,
+                alt_quadril_cm, posturas,
+                tempos_impactos, dist_impactos, impactos_ms2,
+                clearances_passos_cm, tornozelos_passos_cm,
+                pes_passos, projecoes_ap, mascara_validos, reais_m=reais
+            )
+        finally:
+            sys.stdout = terminal
+    print(f"Relatório salvo em {NOME_ARQUIVO_RELATORIO}")
+    print(f"\n📁 Todos os arquivos desta coleta estão em {PASTA_COLETA}")
 
-        gerar_relatorio_e_graficos(
-            t_passo, d_passo_ap, larg_base_m,
-            clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm,
-            alt_quadril_cm, posturas,
-            tempos_impactos, dist_impactos, impactos_ms2,
-            clearances_passos_cm, tornozelos_passos_cm,
-            pes_passos, projecoes_ap, mascara_validos
-        )
-        if pasta_sessao and os.path.exists(NOME_ARQUIVO_PASSOS):
-            import shutil
-            shutil.copy2(NOME_ARQUIVO_PASSOS, pasta_sessao)
+    if MOSTRAR_GRAFICOS:
+        import matplotlib.pyplot as plt
+        plt.show()
 
 
 if __name__ == "__main__":
