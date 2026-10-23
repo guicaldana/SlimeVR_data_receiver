@@ -97,14 +97,14 @@ def pedir_altura_teste(padrao=None, entrada=input, faixa=None):
         print("   A altura precisa estar entre 0,5 e 40 cm.")
 
 
-RODADAS = {"1": "familiarizacao", "2": "valendo"}
-NOME_RODADA = {"familiarizacao": "familiarização", "valendo": "valendo"}
+RODADAS = {"1": "familiarizacao", "2": "coleta"}
+NOME_RODADA = {"familiarizacao": "familiarização", "coleta": "coleta"}
 
 
 def pedir_rodada(entrada=input):
-    """Pergunta se esta coleta é a rodada de familiarização ou a rodada valendo."""
+    """Pergunta se esta coleta é a rodada de familiarização ou a rodada de coleta."""
     while True:
-        r = entrada("   Rodada (1 = familiarização, 2 = valendo): ").strip()
+        r = entrada("   Rodada (1 = familiarização, 2 = coleta): ").strip()
         if r in RODADAS:
             print(f"   Rodada: {NOME_RODADA[RODADAS[r]]}\n")
             return RODADAS[r]

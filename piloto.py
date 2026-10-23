@@ -2065,15 +2065,15 @@ def main():
     if PEDIR_PARTICIPANTE:
         PARTICIPANTE = cadastro.pedir_participante()
         PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
-        # Na rodada valendo, Enter repete as alturas usadas na coleta anterior do participante
+        # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
         anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
         padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
         print("   Alturas dos objetos de teste:")
         PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
                                           for h in padroes]
         definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
-        # Familiarização em ordem fixa (A, B, C); a rodada valendo tem a ordem sorteada
-        if PARTICIPANTE["rodada"] == "valendo" and SORTEAR_ORDEM_CIRCUITOS:
+        # Familiarização em ordem fixa (A, B, C); a rodada de coleta tem a ordem sorteada
+        if PARTICIPANTE["rodada"] == "coleta" and SORTEAR_ORDEM_CIRCUITOS:
             sortear_ordem_circuitos()
             texto_ordem = "Ordem sorteada dos circuitos"
         else:

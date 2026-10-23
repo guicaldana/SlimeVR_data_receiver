@@ -139,12 +139,12 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ### `piloto.py` — Coleta do piloto (três circuitos e três alturas conhecidas numa coleta só)
 Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~5 min de roteiro, além da calibração e da preparação):
-1. Nome e altura do participante, a rodada (1 = familiarização, 2 = valendo) e as alturas dos três objetos de teste (as três são digitadas; serão entre 15 e 25 cm, valores ainda a definir; fora dessa faixa o programa pede confirmação).
+1. Nome e altura do participante, a rodada (1 = familiarização, 2 = coleta) e as alturas dos três objetos de teste (as três são digitadas; serão entre 15 e 25 cm, valores ainda a definir; fora dessa faixa o programa pede confirmação).
 2. Calibração com a caixa de 7 cm.
-3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). Na rodada valendo, a ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`); na familiarização, a ordem é fixa (A, B, C), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: A 60 s, B 45 s, C 30 s (`TEMPO_CAMINHADA_S`).
+3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). Na rodada de coleta, a ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`); na familiarização, a ordem é fixa (A, B, C), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: A 60 s, B 45 s, C 30 s (`TEMPO_CAMINHADA_S`).
 4. Pé E e pé D sobre cada objeto com o tronco reto.
 
-Cada participante faz duas rodadas, rodando o programa duas vezes: primeiro a familiarização (1) e depois a rodada valendo (2). As pastas terminam em `_familiarizacao` e `_valendo`. Na rodada valendo, Enter repete as alturas dos objetos digitadas na familiarização. O `analisar_sessoes.py` deixa a familiarização fora do resumo, a não ser que a pasta seja passada direto.
+Cada participante faz duas rodadas, rodando o programa duas vezes: primeiro a familiarização (1) e depois a rodada de coleta (2). As pastas terminam em `_familiarizacao` e `_coleta`. Na rodada de coleta, Enter repete as alturas dos objetos digitadas na familiarização. O `analisar_sessoes.py` deixa a familiarização fora do resumo, a não ser que a pasta seja passada direto.
 
 Além dos arquivos do `calculo_passo.py`, a pasta da coleta traz `altura_conhecida.csv` (altura medida e erro em cada objeto). Os gráficos e o relatório mostram cada caminhada separada (por circuito), porque os circuitos têm comprimentos diferentes.
 
