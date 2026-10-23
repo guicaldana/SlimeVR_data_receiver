@@ -50,6 +50,8 @@ def carregar_sessao(cp, pasta):
     """Coloca os dados de uma sessão salva nas variáveis do calculo_passo e recalcula."""
     with open(os.path.join(pasta, "dados_brutos_entrada.json"), encoding="utf-8") as f:
         e = json.load(f)
+    # Sessões antigas (sem o campo) usaram o percurso de 20/10
+    marcas_chao.definir_circuito(e.get("circuito") or "20-10")
     for tid, d in e["trackers"].items():
         if tid in ("4", "5"):
             cp.dados[tid] = {k: list(v) for k, v in d.items()}
@@ -147,7 +149,8 @@ def analisar(cp, pasta):
         por_tempo = {c["t"]: c for c in casados}
         for i in sel:
             c = por_tempo.get(float(tempos[i]))
-            linha = {"sessao": nome, "caminhada": etapa.replace("caminhada_", ""), "t": float(tempos[i]),
+            linha = {"sessao": nome, "circuito": marcas_chao.CIRCUITO_ATIVO,
+                     "caminhada": etapa.replace("caminhada_", ""), "t": float(tempos[i]),
                      "pe": str(pes[i]).replace("*", ""), "imu": "*" not in str(pes[i]),
                      "tronco_graus": float(np.interp(tempos[i], t_s, tronco)) if tronco is not None else np.nan,
                      "comp_medido_m": float(comp[i]),

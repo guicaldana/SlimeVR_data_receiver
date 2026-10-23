@@ -2,7 +2,7 @@
 Cadastro do participante e pastas de saída de cada coleta.
 
 Antes do experimento o calculo_passo.py pede o nome e a altura do participante.
-Cada coleta vai para dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/, e o arquivo
+Cada coleta vai para dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_circuitoX/, e o arquivo
 dados/participantes/<Nome>/participante.json guarda o cadastro e a lista de coletas.
 """
 
@@ -57,9 +57,24 @@ def pedir_participante(entrada=input):
     return {"nome": nome, "altura_cm": altura}
 
 
+def pedir_circuito(circuitos, descricao, entrada=input):
+    """Pergunta qual circuito de marcas será usado (A, B ou C)."""
+    opcoes = [c for c in circuitos if len(c) == 1]
+    for c in opcoes:
+        print(f"   Circuito {c}: {descricao.get(c, '')}")
+    while True:
+        c = entrada(f"   Circuito ({'/'.join(opcoes)}): ").strip().upper()
+        if c in opcoes:
+            print()
+            return c
+        print(f"   Digite {', '.join(opcoes[:-1])} ou {opcoes[-1]}.")
+
+
 def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
-    """Cria dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/ e atualiza o participante.json."""
+    """Cria dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>[_circuitoX]/ e atualiza o participante.json."""
     data_hora = time.strftime("%Y%m%d_%H%M%S")
+    if participante.get("circuito"):
+        data_hora += f"_circuito{participante['circuito']}"
     pasta_participante = os.path.join(base, nome_para_pasta(participante["nome"]))
     pasta = os.path.join(pasta_participante, data_hora)
     os.makedirs(pasta, exist_ok=True)
@@ -75,7 +90,8 @@ def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     cadastro["nome"] = participante["nome"]
     cadastro["altura_cm"] = participante["altura_cm"]
     coletas = cadastro.get("coletas", [])
-    coletas.append({"pasta": data_hora, "altura_cm": participante["altura_cm"]})
+    coletas.append({"pasta": data_hora, "altura_cm": participante["altura_cm"],
+                    "circuito": participante.get("circuito")})
     cadastro["coletas"] = coletas
     with open(cadastro_arq, "w", encoding="utf-8") as f:
         json.dump(cadastro, f, ensure_ascii=False, indent=2)

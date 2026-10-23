@@ -9,28 +9,44 @@ O programa mede o comprimento do passo no heel-strike como a distância
 anteroposterior entre os dois pés, que é exatamente essa distância entre marcas.
 """
 
-# (posição em cm, pé que pisa) — percurso montado pelo Guilherme em 20/10/2026
-PERCURSO_MARCAS = [
-    (0, "DIR"),
-    (45, "ESQ"),
-    (95, "DIR"),
-    (150, "ESQ"),
-    (190, "DIR"),
-    (240, "ESQ"),
-    (285, "DIR"),
-    (330, "ESQ"),
-    (380, "DIR"),
-    (410, "ESQ"),
-]
+# (posição em cm, pé que pisa). Todos começam com o pé D na marca 0.
+# Depois da última marca a pessoa junta os pés; esse passo de parada não conta.
+CIRCUITOS = {
+    # Passos curtos (típicos de Parkinson): 12 passos de 20 a 35 cm, 3,30 m
+    "A": [(0, "DIR"), (25, "ESQ"), (45, "DIR"), (75, "ESQ"), (110, "DIR"), (130, "ESQ"), (155, "DIR"),
+          (190, "ESQ"), (220, "DIR"), (245, "ESQ"), (265, "DIR"), (295, "ESQ"), (330, "DIR")],
+    # Passos médios: 10 passos de 40 a 55 cm, 4,75 m
+    "B": [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (135, "ESQ"), (190, "DIR"), (240, "ESQ"),
+          (285, "DIR"), (340, "ESQ"), (380, "DIR"), (430, "ESQ"), (475, "DIR")],
+    # Passos longos: 8 passos de 60 a 75 cm, 5,40 m
+    "C": [(0, "DIR"), (65, "ESQ"), (135, "DIR"), (195, "ESQ"), (270, "DIR"), (340, "ESQ"),
+          (405, "DIR"), (480, "ESQ"), (540, "DIR")],
+    # Percurso usado nos testes de 20/10/2026
+    "20-10": [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (150, "ESQ"), (190, "DIR"), (240, "ESQ"),
+              (285, "DIR"), (330, "ESQ"), (380, "DIR"), (410, "ESQ")],
+}
+DESCRICAO = {"A": "curtos, 20 a 35 cm, 3,30 m", "B": "médios, 40 a 55 cm, 4,75 m",
+             "C": "longos, 60 a 75 cm, 5,40 m", "20-10": "percurso de 20/10"}
+
+CIRCUITO_ATIVO = "20-10"
+PERCURSO_MARCAS = CIRCUITOS[CIRCUITO_ATIVO]
 
 
-def passos_esperados(percurso=PERCURSO_MARCAS):
+def definir_circuito(nome):
+    """Escolhe o circuito usado na comparação com as marcas."""
+    global CIRCUITO_ATIVO, PERCURSO_MARCAS
+    CIRCUITO_ATIVO = nome
+    PERCURSO_MARCAS = CIRCUITOS[nome]
+
+
+def passos_esperados(percurso=None):
     """Lista de (pé, comprimento real em m) de cada passo do percurso."""
+    percurso = percurso or PERCURSO_MARCAS
     return [(pe, (pos - percurso[i - 1][0]) / 100.0)
             for i, (pos, pe) in enumerate(percurso) if i > 0]
 
 
-def casar_com_marcas(pes_detectados, comprimentos_m, tempos=None, percurso=PERCURSO_MARCAS):
+def casar_com_marcas(pes_detectados, comprimentos_m, tempos=None, percurso=None):
     """Liga, em ordem, cada passo detectado a um passo do percurso pelo pé.
 
     Começa no primeiro passo do pé que sai da partida. Se o pé detectado não

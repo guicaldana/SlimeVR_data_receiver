@@ -139,7 +139,15 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ### `marcas_chao.py` e `analisar_sessoes.py` — Comprimento do passo contra marcas no chão e resumo de várias sessões
 
-O comprimento do passo é conferido com um percurso de marcas no chão (`PERCURSO_MARCAS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). Nas duas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
+O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). Logo depois do nome e da altura, o `calculo_passo.py` pergunta qual circuito será usado, e o nome da pasta da coleta termina com `_circuitoA`, `_circuitoB` ou `_circuitoC`:
+
+| Circuito | Passos | Comprimentos | Total | Marcas (cm) |
+|---|---|---|---|---|
+| A, curtos | 12 | 20 a 35 cm | 3,30 m | 0, 25, 45, 75, 110, 130, 155, 190, 220, 245, 265, 295, 330 |
+| B, médios | 10 | 40 a 55 cm | 4,75 m | 0, 45, 95, 135, 190, 240, 285, 340, 380, 430, 475 |
+| C, longos | 8 | 60 a 75 cm | 5,40 m | 0, 65, 135, 195, 270, 340, 405, 480, 540 |
+
+Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas duas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
 
 Cada coleta fica em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/` (as coletas antigas estão em `dados/sessoes/`). Depois de algumas sessões:
 
