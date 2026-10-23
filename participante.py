@@ -70,6 +70,25 @@ def pedir_circuito(circuitos, descricao, entrada=input):
         print(f"   Digite {', '.join(opcoes[:-1])} ou {opcoes[-1]}.")
 
 
+def pedir_altura_teste(padrao=None, entrada=input):
+    """Altura (cm) do objeto de teste desta coleta. Enter aceita o valor padrão."""
+    while True:
+        dica = f"Enter = {padrao:.1f}" if padrao else "por exemplo 3,5"
+        txt = entrada(f"   Altura do objeto de teste em cm ({dica}): ").strip().replace(",", ".")
+        if not txt and padrao:
+            v = float(padrao)
+        else:
+            try:
+                v = float(txt)
+            except ValueError:
+                print("   Digite um número em cm.")
+                continue
+        if 0.5 <= v <= 40:
+            print(f"   Objeto de teste: {v:.1f} cm\n")
+            return round(v, 2)
+        print("   A altura precisa estar entre 0,5 e 40 cm.")
+
+
 def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     """Cria dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>[_circuitoX]/ e atualiza o participante.json."""
     data_hora = time.strftime("%Y%m%d_%H%M%S")

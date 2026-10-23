@@ -100,7 +100,7 @@ CADEIA_ESCALA_NA_MARCHA = False  # 20/10: desligado (o ganho da caixa acertou a 
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
-ALTURA_CAIXA_CM = 6.7
+ALTURA_CAIXA_CM = 7.0    # caixa de calibração (antes de 23/10 o valor usado era 6,7)
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
@@ -109,9 +109,9 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 ROTEIRO_GUIADO = True
 ROTEIRO = [
     ("ir_inicio",           15, "Vá até o início da caminhada e fique parado"),
-    ("caminhada_reta",      20, "CAMINHE pisando com o calcanhar nas MARCAS (pé D na marca 0), tronco RETO; no fim junte os pés"),
+    ("caminhada_reta",      15, "CAMINHE pisando com o calcanhar nas MARCAS (pé D na marca 0), tronco RETO"),
     ("voltar_inicio",       15, "Volte ao início e prepare-se para caminhar inclinado"),
-    ("caminhada_inclinada", 20, "CAMINHE pisando nas MARCAS (pé D na marca 0), tronco INCLINADO (mais de 30°); no fim junte os pés"),
+    ("caminhada_inclinada", 15, "CAMINHE pisando nas MARCAS (pé D na marca 0), tronco INCLINADO (mais de 30°)"),
     ("ir_caixa",            25, "Vá até a caixa e fique com os dois pés no chão, tronco reto"),
     ("caixa_reto_ESQ",       7, "Pé ESQUERDO em cima da caixa, tronco RETO"),
     ("chao_1",               6, "Pé de volta ao chão"),
@@ -1147,8 +1147,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
 
     # 3. Parâmetros Espaciais da Marcha
     if PARTICIPANTE:
-        print(f"\n--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm"
-              f" | circuito {PARTICIPANTE.get('circuito') or marcas_chao.CIRCUITO_ATIVO} ---")
+        print(f"\n--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm ---")
     print(f"\n--- 3. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
@@ -1231,7 +1230,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         altura_p = PARTICIPANTE["altura_cm"] if PARTICIPANTE else None
         reais = reais_m or {}
         escritor.writerow([
-            "Participante", "Altura_participante_cm", "Circuito", "Passo", "Etapa", "Tempo_HeelStrike_s", "Pe_Impacto",
+            "Participante", "Altura_participante_cm", "Passo", "Etapa", "Tempo_HeelStrike_s", "Pe_Impacto",
             "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
             "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Outlier"
         ])
@@ -1239,7 +1238,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
             tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos
         )):
             escritor.writerow([
-                nome_p, f"{altura_p:.1f}" if altura_p else "", marcas_chao.CIRCUITO_ATIVO, i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
+                nome_p, f"{altura_p:.1f}" if altura_p else "", i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
                 f"{imp_p:.2f}", f"{d_p:.3f}", f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
                 f"{reais[i]:.3f}" if i in reais else "",
                 f"{cl_p:.2f}", f"{tn_p:.2f}", f"{tr_p:.2f}", "NAO" if mascara_validos[i] else "SIM"
@@ -1354,7 +1353,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar.grid(True, alpha=0.3, axis='x')
 
     if PARTICIPANTE:
-        fig.suptitle(f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm · circuito {marcas_chao.CIRCUITO_ATIVO}", fontweight="bold")
+        fig.suptitle(f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm", fontweight="bold")
     plt.tight_layout()
     salvar_figura(fig, "painel_completo.png")
 
@@ -1399,7 +1398,7 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
     import matplotlib.pyplot as plt
     grupos = _grupos_marcha(etapas_passos)
     cor_pe = {"ESQ": "darkorange", "DIR": "green"}
-    titulo_p = (f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm · circuito {marcas_chao.CIRCUITO_ATIVO}"
+    titulo_p = (f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm"
                 if PARTICIPANTE else "")
     rotulo = {"caminhada_reta": "Caminhada reta", "caminhada_inclinada": "Caminhada inclinada", "marcha": "Marcha"}
 
@@ -1845,7 +1844,7 @@ def comparar_com_marcas(tempos, pes, comprimentos):
         for c in casados:
             k = int(indices[np.argmin(np.abs(np.asarray(tempos)[m] - c["t"]))])
             reais[k] = c["real_m"]
-        print(f"\n  📏 Comprimento do passo x marcas no chão ({nome}, circuito {marcas_chao.CIRCUITO_ATIVO}):")
+        print(f"\n  📏 Comprimento do passo x marcas no chão ({nome}):")
         print(marcas_chao.resumo_texto(casados))
     return reais
 
@@ -1897,8 +1896,6 @@ def salvar_dados_brutos():
                 w.writerow(linha)
         entrada = {
             "participante": PARTICIPANTE,
-            "circuito": marcas_chao.CIRCUITO_ATIVO,
-            "percurso_marcas": marcas_chao.PERCURSO_MARCAS,
             "modo_altura": MODO_ALTURA,
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
@@ -1929,8 +1926,6 @@ def main():
     # 0. Cadastro do participante e pasta da coleta
     if PEDIR_PARTICIPANTE:
         PARTICIPANTE = cadastro.pedir_participante()
-        PARTICIPANTE["circuito"] = cadastro.pedir_circuito(marcas_chao.CIRCUITOS, marcas_chao.DESCRICAO)
-        marcas_chao.definir_circuito(PARTICIPANTE["circuito"])
         pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
         definir_pasta_saida(pasta)
         print(f"   Os arquivos desta coleta vão para {pasta}\n")

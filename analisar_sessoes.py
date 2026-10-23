@@ -1,5 +1,5 @@
 """
-Junta várias sessões guiadas do calculo_passo.py e resume os resultados.
+Junta várias sessões guiadas do calculo_passo.py ou do piloto.py e resume os resultados.
 
 Cada sessão fica em dados/participantes/<Nome>/AAAAMMDD_HHMMSS/ (antes: dados/sessoes/; o calculo_passo.py grava
 sozinho no fim). O script reprocessa todas com o código atual e mede, para
@@ -21,6 +21,7 @@ resumo.txt e analise_sessoes.png.
 """
 
 import csv
+import re
 import glob
 import json
 import os
@@ -32,7 +33,8 @@ import cadeia_pernas
 import marcas_chao
 
 PASTA_SAIDA = os.path.join("dados", "analise_sessoes")
-CAIXA_CM = 6.7
+CAIXA_CM = 6.7               # caixa usada nas sessões até 22/10 (valor nominal da calibração)
+ALTURA_TESTE_SESSAO = None   # altura conhecida da sessão sendo lida (piloto.py grava no JSON)
 ETAPAS_CAIXA = {
     "caixa_reto_ESQ": ("reto", "ESQ"), "caixa_reto_DIR": ("reto", "DIR"),
     "caixa_incl_ESQ": ("inclinado", "ESQ"), "caixa_incl_DIR": ("inclinado", "DIR"),
@@ -52,6 +54,9 @@ def carregar_sessao(cp, pasta):
         e = json.load(f)
     # Sessões antigas (sem o campo) usaram o percurso de 20/10
     marcas_chao.definir_circuito(e.get("circuito") or "20-10")
+    # Altura do objeto de teste (piloto.py); sessões antigas usaram a caixa de calibração (6,7 nominal)
+    global ALTURA_TESTE_SESSAO
+    ALTURA_TESTE_SESSAO = e.get("altura_teste_cm")
     for tid, d in e["trackers"].items():
         if tid in ("4", "5"):
             cp.dados[tid] = {k: list(v) for k, v in d.items()}
@@ -112,14 +117,15 @@ def analisar(cp, pasta):
     if tronco is not None:  # inclinação em relação à postura da calibração, em graus positivos
         tronco = np.abs(np.asarray(tronco, dtype=float) - cp.pitch_tronco_ref)
     caixa, inclinar, passos = [], [], []
+    altura_ref = ALTURA_TESTE_SESSAO or CAIXA_CM
 
-    # 1. Caixa
+    # 1. Altura conhecida (caixa ou objeto de teste)
     for etapa, (cond, pe) in ETAPAS_CAIXA.items():
         if etapa not in fases:
             continue
         a, b = fases[etapa]
         m = (t_s > a + 2.0) & (t_s < b - 0.5)
-        linha = {"sessao": nome, "condicao": cond, "pe": pe,
+        linha = {"sessao": nome, "condicao": cond, "pe": pe, "altura_ref_cm": altura_ref,
                  "tronco_graus": float(np.median(tronco[m])) if tronco is not None else np.nan}
         for k, (he, hd) in met.items():
             dif = np.median((hd - he)[m])
@@ -140,17 +146,17 @@ def analisar(cp, pasta):
     if cp.COMPRIMENTO_PELO_PLATO and len(tempos) > 0:
         tempos, comp, imp, pes, proj = cp.comprimento_pelo_plato(t, d_passo_ap, tempos, comp, imp, pes, proj)
     alturas = {k: np.array(cp.calcular_alturas_passos(t_s, tempos, pes, he, hd)) for k, (he, hd) in met.items()}
-    for etapa in ("caminhada_reta", "caminhada_inclinada"):
-        if etapa not in fases:
+    for etapa, a, b in cp.fases_sessao:
+        tipo = re.sub(r"_\d+$", "", etapa)
+        if tipo not in ("caminhada_reta", "caminhada_inclinada"):
             continue
-        a, b = fases[etapa]
         sel = np.flatnonzero((tempos >= a) & (tempos <= b + 1.0))
         casados = marcas_chao.casar_com_marcas(pes[sel], comp[sel], tempos[sel])
         por_tempo = {c["t"]: c for c in casados}
         for i in sel:
             c = por_tempo.get(float(tempos[i]))
             linha = {"sessao": nome, "circuito": marcas_chao.CIRCUITO_ATIVO,
-                     "caminhada": etapa.replace("caminhada_", ""), "t": float(tempos[i]),
+                     "caminhada": tipo.replace("caminhada_", ""), "repeticao": etapa, "t": float(tempos[i]),
                      "pe": str(pes[i]).replace("*", ""), "imu": "*" not in str(pes[i]),
                      "tronco_graus": float(np.interp(tempos[i], t_s, tronco)) if tronco is not None else np.nan,
                      "comp_medido_m": float(comp[i]),
@@ -181,15 +187,15 @@ def _ms(x):
 def resumir(caixa, inclinar, passos, n_sessoes):
     L = [f"Sessões analisadas: {n_sessoes}", ""]
     metodos = [m for m in METODOS if caixa and m in caixa[0]]
-    L.append(f"1. CAIXA {CAIXA_CM} cm — erro (cm), média ± desvio entre sessões e pés")
+    L.append("1. ALTURA CONHECIDA (caixa ou objeto de teste) — erro (cm), média ± desvio entre sessões e pés")
     L.append(f"   {'condição':10s} {'n':>3s}  " + "  ".join(f"{m:>13s}" for m in metodos) + "   tronco")
     for cond in ("reto", "inclinado"):
         ls = [c for c in caixa if c["condicao"] == cond]
         if ls:
-            L.append(f"   {cond:10s} {len(ls):3d}  " + "  ".join(f"{_ms([c[m] - CAIXA_CM for c in ls]):>13s}" for m in metodos)
+            L.append(f"   {cond:10s} {len(ls):3d}  " + "  ".join(f"{_ms([c[m] - c["altura_ref_cm"] for c in ls]):>13s}" for m in metodos)
                      + f"   {np.nanmedian([c['tronco_graus'] for c in ls]):5.0f}°")
     L.append("   erro absoluto médio (todas as subidas): " + "  ".join(
-        f"{m} {np.nanmean([abs(c[m] - CAIXA_CM) for c in caixa]):.2f} cm" for m in metodos))
+        f"{m} {np.nanmean([abs(c[m] - c["altura_ref_cm"]) for c in caixa]):.2f} cm" for m in metodos))
     L.append("")
     if inclinar:
         L.append("2. INCLINAR PARADO — diferença entre os pés (cm) só por inclinar (ideal = 0)")
@@ -235,7 +241,7 @@ def grafico(caixa, passos, caminho):
     cores = {"OSC": "#d9822b", "cadeia": "#2b7bd9", "pipeline": "#555555"}
     for j, cond in enumerate(("reto", "inclinado")):
         for i, m in enumerate(metodos):
-            v = [c[m] - CAIXA_CM for c in caixa if c["condicao"] == cond]
+            v = [c[m] - c["altura_ref_cm"] for c in caixa if c["condicao"] == cond]
             x = j * (len(metodos) + 1) + i
             ax[0].scatter(np.full(len(v), x), v, color=cores[m], s=18, label=m if j == 0 else None)
             if v:
