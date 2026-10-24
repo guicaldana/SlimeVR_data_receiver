@@ -120,8 +120,8 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
 ROTEIRO_GUIADO = True
-# Circuitos progressivos (menores -> maiores -> menores), todos com 10 m ou mais.
-TEMPO_CAMINHADA_S = {"A": 60, "B": 45, "C": 30}   # A tem 42 passos, B 28 e C 16
+# Três circuitos, cada um com um comprimento de passo fixo e 18 pegadas (marcas_chao.py).
+TEMPO_CAMINHADA_S = {"A": 25, "B": 25, "C": 25}
 TEMPO_VOLTA_S = 20
 # Uma coleta só: os três circuitos ficam no mesmo corredor (uma cor de fita para cada).
 # Uma caminhada com o tronco reto em cada circuito.

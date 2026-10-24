@@ -138,10 +138,10 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 ---
 
 ### `piloto.py` — Coleta do piloto (três circuitos e três alturas conhecidas numa coleta só)
-Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~5 min de roteiro, além da calibração e da preparação):
+Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~4 min de roteiro por rodada, além da calibração e da preparação):
 1. Nome e altura do participante, a rodada (1 = familiarização, 2 = coleta) e as alturas dos três objetos de teste (as três são digitadas; serão entre 15 e 25 cm, valores ainda a definir; fora dessa faixa o programa pede confirmação).
 2. Calibração com a caixa de 7 cm.
-3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). Na rodada de coleta, a ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`); na familiarização, a ordem é fixa (A, B, C), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: A 60 s, B 45 s, C 30 s (`TEMPO_CAMINHADA_S`).
+3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). Na rodada de coleta, a ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`); na familiarização, a ordem é fixa (A, B, C), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: 25 s em cada circuito (`TEMPO_CAMINHADA_S`).
 4. Pé E e pé D sobre cada objeto com o tronco reto.
 
 Cada participante faz duas rodadas, rodando o programa duas vezes: primeiro a familiarização (1) e depois a rodada de coleta (2). As pastas terminam em `_familiarizacao` e `_coleta`. Na rodada de coleta, Enter repete as alturas dos objetos digitadas na familiarização. O `analisar_sessoes.py` deixa a familiarização fora do resumo, a não ser que a pasta seja passada direto.
@@ -156,13 +156,13 @@ uv run python piloto.py
 
 O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). O `calculo_passo.py` usa o percurso de 20/10. O `piloto.py` usa os três numa coleta só:
 
-| Circuito | Passos | Sequência (cm × passos) | Total |
+| Circuito | Comprimento do passo | Pegadas | Total |
 |---|---|---|---|
-| A, curtos | 42 | 20×6, 25×6, 30×6, 35×6, 30×6, 25×6, 20×6 | 11,10 m |
-| B, médios | 28 | 40×4, 45×4, 50×4, 55×4, 50×4, 45×4, 40×4 | 13,00 m |
-| C, longos | 16 | 60×2, 65×2, 70×2, 75×4, 70×2, 65×2, 60×2 | 10,80 m |
+| A, curtos | 30 cm | 18 | 5,40 m |
+| B, médios | 50 cm | 18 | 9,00 m |
+| C, longos | 70 cm | 18 | 12,60 m |
 
-Os circuitos são progressivos: começam pelos passos menores da faixa, vão até os maiores e voltam aos menores, e todos têm 10 m ou mais. As marcas saem de `BLOCOS` em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
+Cada circuito tem um comprimento de passo fixo e 18 pegadas depois da partida (9 de cada pé). Os comprimentos ficam em `COMPRIMENTO_FIXO_CM`, em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
 
 Cada coleta fica em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/` (as coletas antigas estão em `dados/sessoes/`). Depois de algumas sessões:
 

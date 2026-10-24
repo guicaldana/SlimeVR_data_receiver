@@ -13,11 +13,10 @@ anteroposterior entre os dois pés, que é exatamente essa distância entre marc
 # Depois da última marca a pessoa junta os pés; esse passo de parada não conta.
 
 
-def circuito_progressivo(blocos):
+def montar_circuito(blocos):
     """Monta as marcas a partir de blocos (comprimento cm, número de passos).
 
-    O primeiro passo é do pé E, e os pés alternam. Os circuitos são progressivos:
-    começam pelos passos menores da faixa, vão até os maiores e voltam aos menores.
+    O primeiro passo é do pé E, e os pés alternam.
     """
     marcas, pos, pe = [(0, "DIR")], 0, "ESQ"
     for comp, n in blocos:
@@ -28,15 +27,12 @@ def circuito_progressivo(blocos):
     return marcas
 
 
-BLOCOS = {
-    # Passos curtos (típicos de Parkinson): 20-25-30-35-30-25-20 cm, 42 passos, 11,10 m
-    "A": [(20, 6), (25, 6), (30, 6), (35, 6), (30, 6), (25, 6), (20, 6)],
-    # Passos médios: 40-45-50-55-50-45-40 cm, 28 passos, 13,00 m
-    "B": [(40, 4), (45, 4), (50, 4), (55, 4), (50, 4), (45, 4), (40, 4)],
-    # Passos longos: 60-65-70-75-70-65-60 cm, 16 passos, 10,80 m
-    "C": [(60, 2), (65, 2), (70, 2), (75, 4), (70, 2), (65, 2), (60, 2)],
-}
-CIRCUITOS = {c: circuito_progressivo(b) for c, b in BLOCOS.items()}
+# Cada circuito tem um comprimento de passo fixo e 18 pegadas depois da partida
+# (9 de cada pé). Os comprimentos ainda podem mudar: basta editar COMPRIMENTO_FIXO_CM.
+PEGADAS_POR_CIRCUITO = 18
+COMPRIMENTO_FIXO_CM = {"A": 30, "B": 50, "C": 70}   # curtos, médios, longos
+BLOCOS = {c: [(comp, PEGADAS_POR_CIRCUITO)] for c, comp in COMPRIMENTO_FIXO_CM.items()}
+CIRCUITOS = {c: montar_circuito(b) for c, b in BLOCOS.items()}
 # Percurso usado nos testes de 20/10/2026
 CIRCUITOS["20-10"] = [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (150, "ESQ"), (190, "DIR"), (240, "ESQ"),
                       (285, "DIR"), (330, "ESQ"), (380, "DIR"), (410, "ESQ")]
@@ -44,8 +40,7 @@ CIRCUITOS["20-10"] = [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (150, "ESQ"), (190, 
 
 def _descrever(c):
     m = CIRCUITOS[c]
-    faixa = "-".join(str(comp) for comp, _ in BLOCOS[c])
-    return f"{faixa} cm, {len(m) - 1} passos, {m[-1][0] / 100:.2f} m".replace(".", ",")
+    return f"{COMPRIMENTO_FIXO_CM[c]} cm, {len(m) - 1} passos, {m[-1][0] / 100:.2f} m".replace(".", ",")
 
 
 DESCRICAO = {"A": "curtos, " + _descrever("A"), "B": "médios, " + _descrever("B"),
