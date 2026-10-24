@@ -159,10 +159,10 @@ O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUIT
 | Circuito | Comprimento do passo | Pegadas | Total |
 |---|---|---|---|
 | A, curtos | 30 cm | 18 | 5,40 m |
-| B, médios | 50 cm | 18 | 9,00 m |
-| C, longos | 70 cm | 18 | 12,60 m |
+| B, médios | 35 cm | 18 | 6,30 m |
+| C, longos | 40 cm | 18 | 7,20 m |
 
-Cada circuito tem um comprimento de passo fixo e 18 pegadas depois da partida (9 de cada pé). Os comprimentos ficam em `COMPRIMENTO_FIXO_CM`, em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
+Cada circuito tem um comprimento de passo fixo e 18 pegadas depois da partida (9 de cada pé). Os comprimentos (provavelmente 30, 35 e 40 cm) ficam em `COMPRIMENTO_FIXO_CM`, em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
 
 Cada coleta fica em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/` (as coletas antigas estão em `dados/sessoes/`). Depois de algumas sessões:
 
