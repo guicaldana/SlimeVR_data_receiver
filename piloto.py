@@ -138,6 +138,7 @@ EXPERIMENTO = "completo"
 REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada pé em cada objeto
 SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
 ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
+PES_ALTURA = ["ESQ", "DIR"]         # no experimento de altura: pés que sobem nos objetos
 
 
 def montar_roteiro(alturas_cm=None):
@@ -155,14 +156,15 @@ def montar_roteiro(alturas_cm=None):
     for j in ordem:
         obj = f"objeto de {alturas[j - 1]:.1f} cm"
         r.append((f"ir_objeto_{j}", 15, f"Vá até o {obj} e fique com os dois pés no chão, tronco reto"))
+        pes = PES_ALTURA if EXPERIMENTO == "altura" else ["ESQ", "DIR"]
+        nome_pe = {"ESQ": "ESQUERDO", "DIR": "DIREITO"}
         for k in range(1, reps + 1):
             vez = f" ({k}ª vez)" if reps > 1 else ""
-            r += [
-                (f"caixa_reto_ESQ_{j}",   7, f"Pé ESQUERDO em cima do {obj}{vez}"),
-                (f"chao_reto_ESQ_{j}",    6, "Pé de volta ao chão"),
-                (f"caixa_reto_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}{vez}"),
-                (f"chao_reto_DIR_{j}",    6, "Pé de volta ao chão"),
-            ]
+            for pe in pes:
+                r += [
+                    (f"caixa_reto_{pe}_{j}", 7, f"Pé {nome_pe[pe]} em cima do {obj}{vez}"),
+                    (f"chao_reto_{pe}_{j}",  6, "Pé de volta ao chão"),
+                ]
     return r
 
 
