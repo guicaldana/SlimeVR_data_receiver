@@ -143,6 +143,7 @@ REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada 
 SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
 ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
 PES_ALTURA = ["ESQ", "DIR"]         # no experimento de altura: pés que sobem nos objetos
+TEMPO_TRANSICAO_S = 3               # no experimento de altura: tempo para subir e para descer o pé
 
 
 def montar_roteiro(alturas_cm=None):
@@ -165,6 +166,15 @@ def montar_roteiro(alturas_cm=None):
         for k in range(1, reps + 1):
             vez = f" ({k}ª vez)" if reps > 1 else ""
             for pe in pes:
+                if EXPERIMENTO == "altura" and TEMPO_TRANSICAO_S > 0:
+                    # Etapas só para mover o pé; a medida usa as etapas parado em cima e no chão
+                    r += [
+                        (f"subir_{pe}_{j}", TEMPO_TRANSICAO_S, f"SUBA o pé {nome_pe[pe]} no {obj}{vez}"),
+                        (f"caixa_reto_{pe}_{j}", 7, f"Pé {nome_pe[pe]} PARADO em cima do {obj}{vez}"),
+                        (f"descer_{pe}_{j}", TEMPO_TRANSICAO_S, "DESÇA o pé para o chão"),
+                        (f"chao_reto_{pe}_{j}", 6, "Pé PARADO no chão"),
+                    ]
+                    continue
                 r += [
                     (f"caixa_reto_{pe}_{j}", 7, f"Pé {nome_pe[pe]} em cima do {obj}{vez}"),
                     (f"chao_reto_{pe}_{j}",  6, "Pé de volta ao chão"),
