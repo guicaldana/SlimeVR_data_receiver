@@ -120,6 +120,8 @@ ALTURA_CAIXA_CM = 7.0    # caixa de calibração (antes de 23/10 o valor usado e
 # pelos pontos medidos, corrigindo erros que crescem com a altura (experimento_altura.py).
 ALTURAS_CALIBRACAO_CM = [ALTURA_CAIXA_CM]
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
+TEMPO_TRANSICAO_CALIB_S = 3   # calibração: segundos para subir e para descer o pé da caixa
+TEMPO_VIRAR_CAIXA_S = 10      # calibração com várias alturas: segundos para virar a caixa
 
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
@@ -336,7 +338,7 @@ def aplicar_calibracao(valor, metodo, idx):
     v = np.asarray(valor, dtype=float)
     out = np.interp(v, xs, ys)
     # acima do último ponto, segue a inclinação do último trecho
-    incl = (ys[-1] - ys[-2]) / max(1e-6, xs[-1] - xs[-2])
+    incl = float(np.clip((ys[-1] - ys[-2]) / max(1e-6, xs[-1] - xs[-2]), 0.4, 2.5))
     out = np.where(v > xs[-1], ys[-1] + (v - xs[-1]) * incl, out)
     return float(out) if np.ndim(out) == 0 else out
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
@@ -1661,12 +1663,21 @@ def _clearance_osc_cm(p_esq, p_dir, p_quad):
     return max(0.0, (h_e - piso) * 100.0), max(0.0, (h_d - piso) * 100.0)
 
 
+def _contagem(texto, segundos):
+    """Mostra uma contagem regressiva de segundos inteiros na mesma linha."""
+    for cont in range(int(segundos), 0, -1):
+        print(f"    {texto} {cont}s...   ", end="\r", flush=True)
+        time.sleep(1.0)
+    print(" " * 60, end="\r")
+
+
 def _medir_pe_na_caixa(lado, idx, altura_cm):
     """Pede um pé sobre a caixa e devolve as medianas (pipeline, osc, cadeia) brutas."""
-    print(f"\n👉 Coloque o pé {lado} em cima da caixa de {altura_cm:.1f} cm (o outro pé fica no chão) e fique parado.")
-    for cont in (5, 4, 3, 2, 1):
-        print(f"    Amostragem em {cont}s...   ", end="\r", flush=True)
-        time.sleep(1.0)
+    print(f"\n👉 SUBA o pé {lado} na caixa de {altura_cm:.1f} cm (o outro pé fica no chão).")
+    _aviso_sonoro(1)
+    _contagem("Subindo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1))
+    print("    Pé em cima: fique PARADO.")
+    _contagem("Amostragem em", 2)
     print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
     amostras, amostras_osc, amostras_cad = [], [], []
     t_fim = time.time() + TEMPO_CAIXA_S
@@ -1684,6 +1695,10 @@ def _medir_pe_na_caixa(lado, idx, altura_cm):
                 amostras_cad.append(cad[idx])
         time.sleep(0.01)
     med = lambda a: float(np.median(a)) if a else 0.0
+    print("    DESÇA o pé para o chão.")
+    _aviso_sonoro(1)
+    _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1))
+    _contagem("Pé parado no chão:", 2)
     return med(amostras), med(amostras_osc), med(amostras_cad)
 
 
@@ -1698,17 +1713,19 @@ def calibrar_ganho_caixa():
 
     if MODO_ALTURA == "pipeline":
         pontos = {m: [[(0.0, 0.0)], [(0.0, 0.0)]] for m in ("osc", "cadeia")}
-        for h in alturas:
+        for k, h in enumerate(alturas):
             if len(alturas) > 1:
                 print(f"\n   --- Caixa de {h:.1f} cm ---")
+                if k > 0:
+                    print(f"    VIRE a caixa para ficar com {h:.1f} cm de altura.")
+                    _aviso_sonoro(1)
+                    _contagem("Virando a caixa:", TEMPO_VIRAR_CAIXA_S)
             for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
                 _, m_osc, m_cad = _medir_pe_na_caixa(lado, idx, h)
                 for metodo, med in (("osc", m_osc), ("cadeia", m_cad)):
                     if med >= 2.0:
                         pontos[metodo][idx].append((med, h))
                     print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm (real {h:.1f})")
-                print("    Volte o pé para o chão.")
-                time.sleep(2.0)
         # Ganho único (compatível com as coletas antigas): pela primeira altura
         for metodo in ("osc", "cadeia"):
             g = []
@@ -1717,7 +1734,16 @@ def calibrar_ganho_caixa():
                 g.append(max(0.4, min(2.5, pts[1][1] / pts[1][0])) if len(pts) > 1 else 1.0)
             ganhos_metodo[metodo] = tuple(g)
         if len(alturas) > 1:
-            curvas_metodo = {m: [sorted(pontos[m][0]), sorted(pontos[m][1])] for m in pontos}
+            def _curva(pts):
+                # Ordena pela altura real e descarta pontos em que o medido não cresce
+                saida = [(0.0, 0.0)]
+                for med, real in sorted(pts[1:], key=lambda p: p[1]):
+                    if med > saida[-1][0] + 0.5:
+                        saida.append((med, real))
+                    else:
+                        print(f"    [Aviso] Ponto {med:.1f}->{real:.1f} cm ignorado: a medida não cresceu com a altura.")
+                return saida
+            curvas_metodo = {m: [_curva(pontos[m][0]), _curva(pontos[m][1])] for m in pontos}
             for m in curvas_metodo:
                 for idx, lado in ((0, "E"), (1, "D")):
                     txt = ", ".join(f"{a:.1f}->{b:.1f}" for a, b in curvas_metodo[m][idx][1:])
@@ -1736,8 +1762,6 @@ def calibrar_ganho_caixa():
             ganho = max(0.4, min(2.5, ALTURA_CAIXA_CM / medido))
             print(f"    Pé {lado}: medido {medido:.1f} cm -> ganho {ganho:.3f}")
         resultados[idx] = ganho
-        print("    Volte o pé para o chão.")
-        time.sleep(2.0)
 
     ganho_esq, ganho_dir = resultados[0], resultados[1]
     print(f"\n  [✓] Ganhos: ESQ={ganho_esq:.3f} | DIR={ganho_dir:.3f}")
