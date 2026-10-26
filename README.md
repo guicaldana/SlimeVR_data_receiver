@@ -152,6 +152,15 @@ Além dos arquivos do `calculo_passo.py`, a pasta da coleta traz `altura_conheci
 uv run python piloto.py
 ```
 
+### `experimento_altura.py` — Experimento só de altura (sem caminhada)
+Mesmo cadastro, rodadas (1 = familiarização, 2 = coleta) e calibração (caixa de 7 cm) do `piloto.py`, mas o roteiro tem só os objetos de teste (entre 15 e 25 cm): em cada objeto, pé E e pé D em cima, `REPETICOES_ALTURA` vezes cada (padrão 3), com o tronco reto. Na rodada de coleta a ordem dos objetos é sorteada. São ~4,7 min de roteiro.
+
+A pasta termina em `_altura_familiarizacao` ou `_altura_coleta` e traz `altura_conhecida.csv` (cada subida: objeto, repetição, pé, altura medida e erro), `altura_objetos.png` (medido contra real e erro) e `relatorio.txt` (com a média ± desvio por objeto e pé).
+
+```powershell
+uv run python experimento_altura.py
+```
+
 ### `marcas_chao.py` e `analisar_sessoes.py` — Comprimento do passo contra marcas no chão e resumo de várias sessões
 
 O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). O `calculo_passo.py` usa o percurso de 20/10. O `piloto.py` usa os três numa coleta só:

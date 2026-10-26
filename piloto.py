@@ -133,26 +133,36 @@ ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 ALTURAS_TESTE_PADRAO_CM = [None, None, None]
 FAIXA_ALTURAS_TESTE_CM = (15.0, 25.0)   # fora dela o programa pede confirmação
 ALTURAS_TESTE_CM = []               # definidas no início da coleta
+# Experimento: "completo" (circuitos + objetos) ou "altura" (só objetos, ver experimento_altura.py)
+EXPERIMENTO = "completo"
+REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada pé em cada objeto
+SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
+ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
 
 
 def montar_roteiro(alturas_cm=None):
     """Lista de (nome da etapa, segundos, instrução) da coleta."""
     r = []
-    for c in ORDEM_CIRCUITOS:
+    for c in (ORDEM_CIRCUITOS if EXPERIMENTO != "altura" else []):
         r += [
             (f"ir_inicio_{c}", TEMPO_VOLTA_S, f"Vá até o início do CIRCUITO {c}, pé D na marca 0"),
             (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S[c],
              f"CIRCUITO {c}: CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés"),
         ]
-    for j, h in enumerate(alturas_cm or [ALTURA_CAIXA_CM], start=1):
-        obj = f"objeto de {h:.1f} cm"
-        r += [
-            (f"ir_objeto_{j}",       15, f"Vá até o {obj} e fique com os dois pés no chão, tronco reto"),
-            (f"caixa_reto_ESQ_{j}",   7, f"Pé ESQUERDO em cima do {obj}, tronco RETO"),
-            (f"chao_reto_ESQ_{j}",    6, "Pé de volta ao chão"),
-            (f"caixa_reto_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}, tronco RETO"),
-            (f"chao_reto_DIR_{j}",    6, "Pé de volta ao chão"),
-        ]
+    alturas = list(alturas_cm or [ALTURA_CAIXA_CM])
+    ordem = [j for j in ORDEM_OBJETOS if 1 <= j <= len(alturas)] or list(range(1, len(alturas) + 1))
+    reps = REPETICOES_ALTURA if EXPERIMENTO == "altura" else 1
+    for j in ordem:
+        obj = f"objeto de {alturas[j - 1]:.1f} cm"
+        r.append((f"ir_objeto_{j}", 15, f"Vá até o {obj} e fique com os dois pés no chão, tronco reto"))
+        for k in range(1, reps + 1):
+            vez = f" ({k}ª vez)" if reps > 1 else ""
+            r += [
+                (f"caixa_reto_ESQ_{j}",   7, f"Pé ESQUERDO em cima do {obj}{vez}"),
+                (f"chao_reto_ESQ_{j}",    6, "Pé de volta ao chão"),
+                (f"caixa_reto_DIR_{j}",   7, f"Pé DIREITO em cima do {obj}{vez}"),
+                (f"chao_reto_DIR_{j}",    6, "Pé de volta ao chão"),
+            ]
     return r
 
 
@@ -1944,25 +1954,88 @@ def avaliar_altura_conhecida():
             continue
         cond, pe, j = info
         ref = ALTURAS_TESTE_CM[j - 1] if j and j <= len(ALTURAS_TESTE_CM) else ALTURA_CAIXA_CM
+        rep = 1 + sum(1 for l in linhas if l[0] == ref and l[2] == pe)
         m = (t > t0 + 2.0) & (t < t1 - 0.5)
         if not np.any(m):
             continue
         dif = float(np.median((hd - he)[m]))
         medido = -dif if pe == "ESQ" else dif
         tr = float(np.median(np.abs(np.asarray(tronco)[m] - pitch_tronco_ref))) if tronco is not None else float("nan")
-        linhas.append((ref, cond, pe, medido, medido - ref, tr))
+        linhas.append((ref, cond, pe, medido, medido - ref, tr, rep))
     if not linhas:
-        return
+        return []
     print("\n  📐 Alturas conhecidas")
-    for ref, cond, pe, medido, erro, tr in linhas:
-        print(f"    objeto {ref:5.1f} cm | tronco {cond:9s} ({tr:3.0f}°) | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm)")
+    for ref, cond, pe, medido, erro, tr, rep in linhas:
+        print(f"    objeto {ref:5.1f} cm | {rep}ª vez | tronco {tr:3.0f}° | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm)")
     print(f"    erro absoluto médio: {np.mean([abs(l[4]) for l in linhas]):.1f} cm")
+    refs = sorted({l[0] for l in linhas})
+    if any(sum(1 for l in linhas if l[0] == r) > 2 for r in refs):
+        print("\n    Resumo por objeto e pé (média ± desvio das repetições):")
+        for r in refs:
+            for pe in ("ESQ", "DIR"):
+                v = [l[3] for l in linhas if l[0] == r and l[2] == pe]
+                if v:
+                    print(f"    objeto {r:5.1f} cm | pé {pe}: {np.mean(v):5.1f} ± {np.std(v):.1f} cm"
+                          f"  (erro médio {np.mean(v) - r:+.1f} cm, {len(v)} vezes)")
     arq = os.path.join(PASTA_COLETA, "altura_conhecida.csv")
     with open(arq, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["Altura_real_cm", "Tronco", "Tronco_graus", "Pe", "Altura_medida_cm", "Erro_cm"])
-        for ref, cond, pe, medido, erro, tr in linhas:
-            w.writerow([f"{ref:.2f}", cond, f"{tr:.1f}", pe, f"{medido:.2f}", f"{erro:.2f}"])
+        w.writerow(["Participante", "Altura_real_cm", "Repeticao", "Pe", "Tronco_graus", "Altura_medida_cm", "Erro_cm"])
+        nome = PARTICIPANTE["nome"] if PARTICIPANTE else ""
+        for ref, cond, pe, medido, erro, tr, rep in linhas:
+            w.writerow([nome, f"{ref:.2f}", rep, pe, f"{tr:.1f}", f"{medido:.2f}", f"{erro:.2f}"])
+    return linhas
+
+
+def grafico_altura_conhecida(linhas):
+    """altura_objetos.png: altura medida em cada subida contra a altura real de cada objeto."""
+    import matplotlib.pyplot as plt
+    if not linhas:
+        return
+    refs = sorted({l[0] for l in linhas})
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    cores = {"ESQ": "tab:orange", "DIR": "tab:green"}
+    for i, r in enumerate(refs):
+        for pe, dx in (("ESQ", -0.12), ("DIR", 0.12)):
+            v = [l[3] for l in linhas if l[0] == r and l[2] == pe]
+            ax1.scatter([i + dx] * len(v), v, color=cores[pe], s=36, zorder=3,
+                        label=f"pé {pe}" if i == 0 else None)
+        ax1.plot([i - 0.35, i + 0.35], [r, r], color="k", lw=2, zorder=2,
+                 label="altura real" if i == 0 else None)
+    ax1.set_xticks(range(len(refs)))
+    ax1.set_xticklabels([f"{r:.1f} cm" for r in refs])
+    ax1.set_xlabel("Objeto")
+    ax1.set_ylabel("Altura medida (cm)")
+    ax1.set_title("Altura medida em cada subida")
+    ax1.set_ylim(bottom=0)
+    ax1.legend(frameon=False)
+    for pe in ("ESQ", "DIR"):
+        e = [l[4] for l in linhas if l[2] == pe]
+        x = [l[0] for l in linhas if l[2] == pe]
+        ax2.scatter(x, e, color=cores[pe], s=36, label=f"pé {pe}")
+    ax2.axhline(0, color="k", lw=1)
+    ax2.set_xlabel("Altura real (cm)")
+    ax2.set_ylabel("Erro (medido − real, cm)")
+    ax2.set_title(f"Erro absoluto médio: {np.mean([abs(l[4]) for l in linhas]):.1f} cm")
+    ax2.legend(frameon=False)
+    if PARTICIPANTE:
+        fig.suptitle(f"{PARTICIPANTE['nome']} — experimento de altura")
+    fig.tight_layout()
+    salvar_figura(fig, "altura_objetos.png")
+    if MOSTRAR_GRAFICOS:
+        plt.show()
+    plt.close(fig)
+
+
+def sortear_ordem_objetos(gerador=None):
+    """Sorteia a ordem dos objetos de teste e refaz o roteiro (experimento de altura)."""
+    global ORDEM_OBJETOS, ROTEIRO
+    import random
+    g = gerador or random.SystemRandom()
+    n = len(ALTURAS_TESTE_CM)
+    ORDEM_OBJETOS = g.sample(range(1, n + 1), n)
+    ROTEIRO = montar_roteiro(ALTURAS_TESTE_CM or None)
+    return ORDEM_OBJETOS
 
 
 def sortear_ordem_circuitos(gerador=None):
@@ -2031,6 +2104,9 @@ def salvar_dados_brutos():
             "participante": PARTICIPANTE,
             "circuitos": CIRCUITOS_COLETA,
             "ordem_circuitos": ORDEM_CIRCUITOS,
+            "experimento": EXPERIMENTO,
+            "ordem_objetos": ORDEM_OBJETOS,
+            "repeticoes_altura": REPETICOES_ALTURA if EXPERIMENTO == "altura" else 1,
             "percursos_marcas": {c: marcas_chao.CIRCUITOS[c] for c in CIRCUITOS_COLETA},
             "altura_caixa_calibracao_cm": ALTURA_CAIXA_CM,
             "alturas_teste_cm": ALTURAS_TESTE_CM,
@@ -2072,14 +2148,23 @@ def main():
         PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
                                           for h in padroes]
         definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
-        # Familiarização em ordem fixa (A, B, C); a rodada de coleta tem a ordem sorteada
-        if PARTICIPANTE["rodada"] == "coleta" and SORTEAR_ORDEM_CIRCUITOS:
-            sortear_ordem_circuitos()
-            texto_ordem = "Ordem sorteada dos circuitos"
+        PARTICIPANTE["experimento"] = EXPERIMENTO
+        if EXPERIMENTO == "altura":
+            # Familiarização na ordem 1, 2, 3; na rodada de coleta a ordem dos objetos é sorteada
+            if PARTICIPANTE["rodada"] == "coleta" and SORTEAR_ORDEM_OBJETOS:
+                sortear_ordem_objetos()
+            PARTICIPANTE["ordem_objetos"] = list(ORDEM_OBJETOS)
+            print("   Ordem dos objetos: " + " -> ".join(
+                f"{ALTURAS_TESTE_CM[j - 1]:.1f} cm" for j in (ORDEM_OBJETOS or [1, 2, 3])) + "\n")
         else:
-            texto_ordem = "Ordem dos circuitos (familiarização, fixa)"
-        PARTICIPANTE["ordem_circuitos"] = list(ORDEM_CIRCUITOS)
-        print(f"   {texto_ordem}: {' -> '.join(ORDEM_CIRCUITOS)}\n")
+            # Familiarização em ordem fixa (A, B, C); a rodada de coleta tem a ordem sorteada
+            if PARTICIPANTE["rodada"] == "coleta" and SORTEAR_ORDEM_CIRCUITOS:
+                sortear_ordem_circuitos()
+                texto_ordem = "Ordem sorteada dos circuitos"
+            else:
+                texto_ordem = "Ordem dos circuitos (familiarização, fixa)"
+            PARTICIPANTE["ordem_circuitos"] = list(ORDEM_CIRCUITOS)
+            print(f"   {texto_ordem}: {' -> '.join(ORDEM_CIRCUITOS)}\n")
         pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
         definir_pasta_saida(pasta)
         print(f"   Os arquivos desta coleta vão para {pasta}\n")
@@ -2166,6 +2251,21 @@ def processar_coleta():
 
     salvar_fases()
     salvar_dados_brutos()
+
+    if EXPERIMENTO == "altura":
+        terminal = sys.stdout
+        with open(NOME_ARQUIVO_RELATORIO, "w", encoding="utf-8") as frel:
+            sys.stdout = _Tee(frel, terminal)
+            try:
+                if PARTICIPANTE:
+                    print(f"--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm"
+                          f" | ordem dos objetos {' -> '.join(str(j) for j in ORDEM_OBJETOS) or '1 -> 2 -> 3'} ---")
+                linhas = avaliar_altura_conhecida()
+            finally:
+                sys.stdout = terminal
+        print(f"Relatório salvo em {NOME_ARQUIVO_RELATORIO}")
+        grafico_altura_conhecida(linhas)
+        return
 
     tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
         t_passo, d_passo_ap, taxa

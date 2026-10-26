@@ -127,6 +127,8 @@ def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     data_hora = time.strftime("%Y%m%d_%H%M%S")
     if participante.get("circuito"):
         data_hora += f"_circuito{participante['circuito']}"
+    if participante.get("experimento") == "altura":
+        data_hora += "_altura"
     if participante.get("rodada"):
         data_hora += f"_{participante['rodada']}"
     pasta_participante = os.path.join(base, nome_para_pasta(participante["nome"]))
@@ -146,6 +148,7 @@ def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     coletas = cadastro.get("coletas", [])
     coletas.append({"pasta": data_hora, "altura_cm": participante["altura_cm"],
                     "circuito": participante.get("circuito"), "rodada": participante.get("rodada"),
+                    "experimento": participante.get("experimento"),
                     "alturas_teste_cm": participante.get("alturas_teste_cm"),
                     "ordem_circuitos": participante.get("ordem_circuitos")})
     cadastro["coletas"] = coletas
