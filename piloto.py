@@ -326,6 +326,9 @@ ganhos_cadeia_caixa = []         # ganho da cadeia na caixa, antes do ajuste pel
 # Curvas de calibração com várias alturas: {"osc": [curva_E, curva_D], "cadeia": [...]},
 # cada curva é uma lista [(medido_cm, real_cm), ...] começando em (0, 0). Vazio = usa ganhos_metodo.
 curvas_metodo = {}
+pontos_calibracao = {}           # {"osc": [pts_E, pts_D], ...} com (medido_cm, real_cm) da caixa
+# Avisa quando a razão real/medido de uma altura da caixa difere da outra em mais que isso (1.25 = 25%)
+LIMITE_DIVERGENCIA_CALIB = 1.25
 
 
 def aplicar_calibracao(valor, metodo, idx):
@@ -1704,7 +1707,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm):
 
 def calibrar_ganho_caixa():
     """Pede para pisar na caixa com cada pé (em uma ou mais alturas) e calcula a correção por pé."""
-    global ganho_esq, ganho_dir, ganhos_metodo, curvas_metodo
+    global ganho_esq, ganho_dir, ganhos_metodo, curvas_metodo, pontos_calibracao
     alturas = list(ALTURAS_CALIBRACAO_CM or [ALTURA_CAIXA_CM])
     print("\n" + "=" * 90)
     print("   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM A CAIXA: "
@@ -1726,28 +1729,38 @@ def calibrar_ganho_caixa():
                     if med >= 2.0:
                         pontos[metodo][idx].append((med, h))
                     print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm (real {h:.1f})")
-        # Ganho único (compatível com as coletas antigas): pela primeira altura
+        # Ganho por pé e método: reta passando pelo zero ajustada a todas as alturas da caixa
+        # (mínimos quadrados: g = soma(medido*real) / soma(medido^2)). Uma reta só é mais
+        # robusta que a curva com quebra quando um dos pontos sai ruim.
+        pontos_calibracao = {m: [[list(p) for p in pontos[m][i][1:]] for i in (0, 1)] for m in pontos}
+        curvas_metodo = {}
+        inconsistentes = []
         for metodo in ("osc", "cadeia"):
             g = []
-            for idx in (0, 1):
-                pts = sorted(pontos[metodo][idx])
-                g.append(max(0.4, min(2.5, pts[1][1] / pts[1][0])) if len(pts) > 1 else 1.0)
+            for idx, lado in ((0, "E"), (1, "D")):
+                pts = pontos[metodo][idx][1:]
+                if not pts:
+                    g.append(1.0)
+                    continue
+                num = sum(m * r for m, r in pts)
+                den = sum(m * m for m, r in pts)
+                g.append(max(0.4, min(2.5, num / den)))
+                razoes = [r / m for m, r in pts]
+                pe_usado = ("ESQ", "DIR")[idx] in (PES_ALTURA or ["ESQ", "DIR"])
+                if pe_usado and len(razoes) > 1 and max(razoes) / min(razoes) > LIMITE_DIVERGENCIA_CALIB:
+                    inconsistentes.append(f"{metodo} pé {lado} (" + ", ".join(
+                        f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
+                print(f"    Ganho {metodo} pé {lado}: {g[-1]:.3f}")
             ganhos_metodo[metodo] = tuple(g)
-        if len(alturas) > 1:
-            def _curva(pts):
-                # Ordena pela altura real e descarta pontos em que o medido não cresce
-                saida = [(0.0, 0.0)]
-                for med, real in sorted(pts[1:], key=lambda p: p[1]):
-                    if med > saida[-1][0] + 0.5:
-                        saida.append((med, real))
-                    else:
-                        print(f"    [Aviso] Ponto {med:.1f}->{real:.1f} cm ignorado: a medida não cresceu com a altura.")
-                return saida
-            curvas_metodo = {m: [_curva(pontos[m][0]), _curva(pontos[m][1])] for m in pontos}
-            for m in curvas_metodo:
-                for idx, lado in ((0, "E"), (1, "D")):
-                    txt = ", ".join(f"{a:.1f}->{b:.1f}" for a, b in curvas_metodo[m][idx][1:])
-                    print(f"    Curva {m} pé {lado}: {txt}")
+        if inconsistentes:
+            print("\n    [Aviso] As alturas da caixa não concordam entre si:")
+            for txt in inconsistentes:
+                print(f"      - {txt}")
+            print("    Confira se o pé ficou todo apoiado e se a caixa estava virada na altura certa.")
+            _aviso_sonoro(2)
+            resp = input("    Repetir a calibração da caixa? [S/n]: ").strip().lower()
+            if resp in ("", "s", "sim"):
+                return calibrar_ganho_caixa()
         ganho_esq, ganho_dir = 1.0, 1.0
         print("=" * 90)
         return
@@ -2077,7 +2090,7 @@ def avaliar_altura_conhecida():
             v = [abs(extra[(i, metodo)] - l[0]) for i, l in enumerate(linhas) if (i, metodo) in extra]
             if v:
                 print(f"    erro absoluto médio pelo {metodo}: {np.mean(v):.1f} cm")
-        if curvas_metodo:
+        if len(ALTURAS_CALIBRACAO_CM or []) > 1:
             print("    (calibração com a caixa em " + " e ".join(f"{h:.1f}" for h in ALTURAS_CALIBRACAO_CM) + " cm)")
     arq = os.path.join(PASTA_COLETA, "altura_conhecida.csv")
     with open(arq, "w", newline="", encoding="utf-8") as f:
@@ -2220,6 +2233,7 @@ def salvar_dados_brutos():
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
             "alturas_calibracao_cm": list(ALTURAS_CALIBRACAO_CM),
             "curvas_metodo": {k: [[list(p) for p in c] for c in v] for k, v in curvas_metodo.items()},
+            "pontos_calibracao": pontos_calibracao,
             "fases": [list(f) for f in fases_sessao],
             "ganhos_cadeia_caixa": list(ganhos_cadeia_caixa),
             "calibracao": {
