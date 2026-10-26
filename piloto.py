@@ -2043,6 +2043,10 @@ def avaliar_altura_conhecida():
         if s.get(ce) is not None and s.get(cd) is not None:
             por_metodo[metodo] = (np.asarray(aplicar_calibracao(np.asarray(s[ce], dtype=float), metodo, 0)),
                                   np.asarray(aplicar_calibracao(np.asarray(s[cd], dtype=float), metodo, 1)))
+    # Os mesmos métodos sem calibração, para ver se a correção da caixa ajuda
+    for metodo, ce, cd in (("osc", "osc_esq_cm", "osc_dir_cm"), ("cadeia", "cadeia_esq_cm", "cadeia_dir_cm")):
+        if metodo in por_metodo and CALIBRAR_CAIXA:
+            por_metodo[metodo + "_bruto"] = (np.asarray(s[ce], dtype=float), np.asarray(s[cd], dtype=float))
     extra = {}
     linhas = []
     for nome, t0, t1 in fases_sessao:
@@ -2078,7 +2082,7 @@ def avaliar_altura_conhecida():
                     print(f"    objeto {r:5.1f} cm | pé {pe}: {np.mean(v):5.1f} ± {np.std(v):.1f} cm"
                           f"  (erro médio {np.mean(v) - r:+.1f} cm, {len(v)} vezes)")
     if por_metodo:
-        print("\n    Comparação dos métodos (cada um com a sua calibração), erro médio por objeto:")
+        print("\n    Comparação dos métodos" + (" (com a calibração da caixa; _bruto = sem calibração)" if CALIBRAR_CAIXA else "") + ", erro médio por objeto:")
         for r in refs:
             txt = []
             for metodo in por_metodo:
@@ -2090,7 +2094,9 @@ def avaliar_altura_conhecida():
             v = [abs(extra[(i, metodo)] - l[0]) for i, l in enumerate(linhas) if (i, metodo) in extra]
             if v:
                 print(f"    erro absoluto médio pelo {metodo}: {np.mean(v):.1f} cm")
-        if len(ALTURAS_CALIBRACAO_CM or []) > 1:
+        if not CALIBRAR_CAIXA:
+            print("    (sem calibração da caixa: valores brutos)")
+        elif len(ALTURAS_CALIBRACAO_CM or []) > 1:
             print("    (calibração com a caixa em " + " e ".join(f"{h:.1f}" for h in ALTURAS_CALIBRACAO_CM) + " cm)")
     arq = os.path.join(PASTA_COLETA, "altura_conhecida.csv")
     with open(arq, "w", newline="", encoding="utf-8") as f:
