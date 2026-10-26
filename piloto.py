@@ -115,6 +115,10 @@ CADEIA_ESCALA_NA_MARCHA = False  # 20/10: desligado (o ganho da caixa acertou a 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
 ALTURA_CAIXA_CM = 7.0    # caixa de calibração (antes de 23/10 o valor usado era 6,7)
+# Alturas da calibração (cm). Com uma altura, o ganho é um fator só (ALTURA_CAIXA_CM).
+# Com duas ou mais, cada método e cada pé ganha uma curva que passa pelo chão (0, 0) e
+# pelos pontos medidos, corrigindo erros que crescem com a altura (experimento_altura.py).
+ALTURAS_CALIBRACAO_CM = [ALTURA_CAIXA_CM]
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
@@ -307,6 +311,24 @@ ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado
 # No modo "pipeline", cada método tem o seu ganho por pé: {"osc": (E, D), "cadeia": (E, D)}
 ganhos_metodo = {"osc": (1.0, 1.0), "cadeia": (1.0, 1.0)}
 ganhos_cadeia_caixa = []         # ganho da cadeia na caixa, antes do ajuste pela marcha
+# Curvas de calibração com várias alturas: {"osc": [curva_E, curva_D], "cadeia": [...]},
+# cada curva é uma lista [(medido_cm, real_cm), ...] começando em (0, 0). Vazio = usa ganhos_metodo.
+curvas_metodo = {}
+
+
+def aplicar_calibracao(valor, metodo, idx):
+    """Altura corrigida (cm) de um pé por um método: curva de calibração ou ganho único."""
+    curva = (curvas_metodo.get(metodo) or [None, None])[idx]
+    if not curva or len(curva) < 2:
+        return valor * ganhos_metodo[metodo][idx]
+    xs = np.array([c[0] for c in curva], dtype=float)
+    ys = np.array([c[1] for c in curva], dtype=float)
+    v = np.asarray(valor, dtype=float)
+    out = np.interp(v, xs, ys)
+    # acima do último ponto, segue a inclinação do último trecho
+    incl = (ys[-1] - ys[-2]) / max(1e-6, xs[-1] - xs[-2])
+    out = np.where(v > xs[-1], ys[-1] + (v - xs[-1]) * incl, out)
+    return float(out) if np.ndim(out) == 0 else out
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -1596,16 +1618,14 @@ def combinar_alturas(osc_e, osc_d, cad_e, cad_d, pitch_tronco=None):
     """Junta as alturas do OSC e da cadeia conforme MODO_ALTURA (aceita escalares ou arrays)."""
     if cad_e is None or MODO_ALTURA == "osc":
         if MODO_ALTURA == "pipeline":
-            g = ganhos_metodo["osc"]
-            return osc_e * g[0], osc_d * g[1]
+            return aplicar_calibracao(osc_e, "osc", 0), aplicar_calibracao(osc_d, "osc", 1)
         return osc_e, osc_d
     if MODO_ALTURA == "cadeia":
         return cad_e, cad_d
     if MODO_ALTURA == "pipeline":
-        go, gc = ganhos_metodo["osc"], ganhos_metodo["cadeia"]
         w = peso_cadeia(pitch_tronco)
-        return ((1.0 - w) * osc_e * go[0] + w * cad_e * gc[0],
-                (1.0 - w) * osc_d * go[1] + w * cad_d * gc[1])
+        return ((1.0 - w) * aplicar_calibracao(osc_e, "osc", 0) + w * aplicar_calibracao(cad_e, "cadeia", 0),
+                (1.0 - w) * aplicar_calibracao(osc_d, "osc", 1) + w * aplicar_calibracao(cad_d, "cadeia", 1))
     return (osc_e + cad_e) / 2.0, (osc_d + cad_d) / 2.0
 
 
@@ -1631,53 +1651,74 @@ def _clearance_osc_cm(p_esq, p_dir, p_quad):
     return max(0.0, (h_e - piso) * 100.0), max(0.0, (h_d - piso) * 100.0)
 
 
+def _medir_pe_na_caixa(lado, idx, altura_cm):
+    """Pede um pé sobre a caixa e devolve as medianas (pipeline, osc, cadeia) brutas."""
+    print(f"\n👉 Coloque o pé {lado} em cima da caixa de {altura_cm:.1f} cm (o outro pé fica no chão) e fique parado.")
+    for cont in (5, 4, 3, 2, 1):
+        print(f"    Amostragem em {cont}s...   ", end="\r", flush=True)
+        time.sleep(1.0)
+    print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
+    amostras, amostras_osc, amostras_cad = [], [], []
+    t_fim = time.time() + TEMPO_CAIXA_S
+    while time.time() < t_fim and rodando:
+        with lock:
+            pe = pos_atual[TORNOZELO_ESQ]
+            pd = pos_atual[TORNOZELO_DIR]
+            pq = pos_atual[TRACKER_QUADRIL]
+            qs = dict(quat_atual)
+        if pe is not None and pd is not None:
+            amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
+            amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
+            cad = _clearance_cadeia_cm(qs)
+            if cad is not None:
+                amostras_cad.append(cad[idx])
+        time.sleep(0.01)
+    med = lambda a: float(np.median(a)) if a else 0.0
+    return med(amostras), med(amostras_osc), med(amostras_cad)
+
+
 def calibrar_ganho_caixa():
-    """Pede para pisar na caixa com cada pé e calcula o fator de escala por pé."""
-    global ganho_esq, ganho_dir, ganhos_metodo
+    """Pede para pisar na caixa com cada pé (em uma ou mais alturas) e calcula a correção por pé."""
+    global ganho_esq, ganho_dir, ganhos_metodo, curvas_metodo
+    alturas = list(ALTURAS_CALIBRACAO_CM or [ALTURA_CAIXA_CM])
     print("\n" + "=" * 90)
-    print(f"   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM CAIXA DE {ALTURA_CAIXA_CM:.1f} CM")
+    print("   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM A CAIXA: "
+          + " e ".join(f"{h:.1f} cm" for h in alturas))
     print("=" * 90)
+
+    if MODO_ALTURA == "pipeline":
+        pontos = {m: [[(0.0, 0.0)], [(0.0, 0.0)]] for m in ("osc", "cadeia")}
+        for h in alturas:
+            if len(alturas) > 1:
+                print(f"\n   --- Caixa de {h:.1f} cm ---")
+            for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
+                _, m_osc, m_cad = _medir_pe_na_caixa(lado, idx, h)
+                for metodo, med in (("osc", m_osc), ("cadeia", m_cad)):
+                    if med >= 2.0:
+                        pontos[metodo][idx].append((med, h))
+                    print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm (real {h:.1f})")
+                print("    Volte o pé para o chão.")
+                time.sleep(2.0)
+        # Ganho único (compatível com as coletas antigas): pela primeira altura
+        for metodo in ("osc", "cadeia"):
+            g = []
+            for idx in (0, 1):
+                pts = sorted(pontos[metodo][idx])
+                g.append(max(0.4, min(2.5, pts[1][1] / pts[1][0])) if len(pts) > 1 else 1.0)
+            ganhos_metodo[metodo] = tuple(g)
+        if len(alturas) > 1:
+            curvas_metodo = {m: [sorted(pontos[m][0]), sorted(pontos[m][1])] for m in pontos}
+            for m in curvas_metodo:
+                for idx, lado in ((0, "E"), (1, "D")):
+                    txt = ", ".join(f"{a:.1f}->{b:.1f}" for a, b in curvas_metodo[m][idx][1:])
+                    print(f"    Curva {m} pé {lado}: {txt}")
+        ganho_esq, ganho_dir = 1.0, 1.0
+        print("=" * 90)
+        return
 
     resultados = {}
     for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
-        print(f"\n👉 Coloque o pé {lado} em cima da caixa (o outro pé fica no chão) e fique parado.")
-        for cont in (5, 4, 3, 2, 1):
-            print(f"    Amostragem em {cont}s...   ", end="\r", flush=True)
-            time.sleep(1.0)
-        print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
-
-        amostras = []
-        amostras_osc, amostras_cad = [], []
-        t_fim = time.time() + TEMPO_CAIXA_S
-        while time.time() < t_fim and rodando:
-            with lock:
-                pe = pos_atual[TORNOZELO_ESQ]
-                pd = pos_atual[TORNOZELO_DIR]
-                pq = pos_atual[TRACKER_QUADRIL]
-                qs = dict(quat_atual)
-            if pe is not None and pd is not None:
-                amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
-                amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
-                cad = _clearance_cadeia_cm(qs)
-                if cad is not None:
-                    amostras_cad.append(cad[idx])
-            time.sleep(0.01)
-
-        if MODO_ALTURA == "pipeline":
-            # Ganho próprio de cada método; o ganho global fica em 1
-            for metodo, amo in (("osc", amostras_osc), ("cadeia", amostras_cad)):
-                med = float(np.median(amo)) if amo else 0.0
-                g = max(0.4, min(2.5, ALTURA_CAIXA_CM / med)) if med >= 2.0 else 1.0
-                atual = list(ganhos_metodo[metodo])
-                atual[idx] = g
-                ganhos_metodo[metodo] = tuple(atual)
-                print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm -> ganho {g:.3f}")
-            resultados[idx] = 1.0
-            print("    Volte o pé para o chão.")
-            time.sleep(2.0)
-            continue
-
-        medido = float(np.median(amostras)) if amostras else 0.0
+        medido, _, _ = _medir_pe_na_caixa(lado, idx, ALTURA_CAIXA_CM)
         if medido < 2.0:
             print(f"    [Aviso] Pé {lado}: só {medido:.1f} cm medidos. Ganho mantido em 1.0.")
             ganho = 1.0
@@ -1949,6 +1990,13 @@ def avaliar_altura_conhecida():
     t = np.asarray(s["t"])
     he, hd = np.asarray(s["altura_esq_cm"]), np.asarray(s["altura_dir_cm"])
     tronco = s.get("tronco_graus")
+    # Cada método separado, já com a sua calibração (para comparar OSC e cadeia)
+    por_metodo = {}
+    for metodo, ce, cd in (("osc", "osc_esq_cm", "osc_dir_cm"), ("cadeia", "cadeia_esq_cm", "cadeia_dir_cm")):
+        if s.get(ce) is not None and s.get(cd) is not None:
+            por_metodo[metodo] = (np.asarray(aplicar_calibracao(np.asarray(s[ce], dtype=float), metodo, 0)),
+                                  np.asarray(aplicar_calibracao(np.asarray(s[cd], dtype=float), metodo, 1)))
+    extra = {}
     linhas = []
     for nome, t0, t1 in fases_sessao:
         info = _etapa_altura(nome)
@@ -1964,6 +2012,9 @@ def avaliar_altura_conhecida():
         medido = -dif if pe == "ESQ" else dif
         tr = float(np.median(np.abs(np.asarray(tronco)[m] - pitch_tronco_ref))) if tronco is not None else float("nan")
         linhas.append((ref, cond, pe, medido, medido - ref, tr, rep))
+        for metodo, (me, md) in por_metodo.items():
+            dm = float(np.median((md - me)[m]))
+            extra[(len(linhas) - 1, metodo)] = -dm if pe == "ESQ" else dm
     if not linhas:
         return []
     print("\n  📐 Alturas conhecidas")
@@ -1979,13 +2030,31 @@ def avaliar_altura_conhecida():
                 if v:
                     print(f"    objeto {r:5.1f} cm | pé {pe}: {np.mean(v):5.1f} ± {np.std(v):.1f} cm"
                           f"  (erro médio {np.mean(v) - r:+.1f} cm, {len(v)} vezes)")
+    if por_metodo:
+        print("\n    Comparação dos métodos (cada um com a sua calibração), erro médio por objeto:")
+        for r in refs:
+            txt = []
+            for metodo in por_metodo:
+                v = [extra[(i, metodo)] for i, l in enumerate(linhas) if l[0] == r and (i, metodo) in extra]
+                if v:
+                    txt.append(f"{metodo} {np.mean(v):5.1f} cm ({np.mean(v) - r:+.1f})")
+            print(f"    objeto {r:5.1f} cm | " + " | ".join(txt))
+        for metodo in por_metodo:
+            v = [abs(extra[(i, metodo)] - l[0]) for i, l in enumerate(linhas) if (i, metodo) in extra]
+            if v:
+                print(f"    erro absoluto médio pelo {metodo}: {np.mean(v):.1f} cm")
+        if curvas_metodo:
+            print("    (calibração com a caixa em " + " e ".join(f"{h:.1f}" for h in ALTURAS_CALIBRACAO_CM) + " cm)")
     arq = os.path.join(PASTA_COLETA, "altura_conhecida.csv")
     with open(arq, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["Participante", "Altura_real_cm", "Repeticao", "Pe", "Tronco_graus", "Altura_medida_cm", "Erro_cm"])
+        metodos = list(por_metodo)
+        w.writerow(["Participante", "Altura_real_cm", "Repeticao", "Pe", "Tronco_graus", "Altura_medida_cm", "Erro_cm"]
+                   + [f"Altura_{m}_cm" for m in metodos])
         nome = PARTICIPANTE["nome"] if PARTICIPANTE else ""
-        for ref, cond, pe, medido, erro, tr, rep in linhas:
-            w.writerow([nome, f"{ref:.2f}", rep, pe, f"{tr:.1f}", f"{medido:.2f}", f"{erro:.2f}"])
+        for i, (ref, cond, pe, medido, erro, tr, rep) in enumerate(linhas):
+            w.writerow([nome, f"{ref:.2f}", rep, pe, f"{tr:.1f}", f"{medido:.2f}", f"{erro:.2f}"]
+                       + [f"{extra[(i, m)]:.2f}" if (i, m) in extra else "" for m in metodos])
     return linhas
 
 
@@ -2115,6 +2184,8 @@ def salvar_dados_brutos():
             "modo_altura": MODO_ALTURA,
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
+            "alturas_calibracao_cm": list(ALTURAS_CALIBRACAO_CM),
+            "curvas_metodo": {k: [[list(p) for p in c] for c in v] for k, v in curvas_metodo.items()},
             "fases": [list(f) for f in fases_sessao],
             "ganhos_cadeia_caixa": list(ganhos_cadeia_caixa),
             "calibracao": {
