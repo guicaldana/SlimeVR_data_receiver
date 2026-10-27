@@ -161,6 +161,19 @@ A pasta termina em `_altura_familiarizacao` ou `_altura_coleta` e traz `altura_c
 uv run python experimento_altura.py
 ```
 
+### `captura_livre.py` — Captura livre (sem roteiro)
+Grava os dados das IMUs sem roteiro e calcula as mesmas variáveis do `calculo_passo.py` (que não muda). Pede nome e altura do participante e a duração da gravação (Enter = só termina com Ctrl + C), faz a calibração parada com os dois pés no chão e depois a pessoa caminha, para e vira como quiser. Sem calibração da caixa (`CALIBRAR_CAIXA = False`, OSC bruto) e altura pelo `pipeline` (OSC com o tronco reto, cadeia das pernas com o tronco inclinado).
+
+Além do relatório do `calculo_passo.py`, separa os passos em trechos de caminhada (pausa de mais de 1,5 s entre passos, `PAUSA_MAX_S`) e calcula por trecho e no geral: comprimento do passo, altura do pé, tempo do passo, tempo da passada, largura da base, cadência, velocidade estimada, variabilidade (CV), simetria E/D, tronco e cabeça. Trechos com menos de 4 passos (`PASSOS_MIN_TRECHO`) e outliers não entram nas médias. A cadência do relatório do `calculo_passo.py` conta as pausas; na captura livre, use a da seção "Captura livre".
+
+A pasta termina em `_livre` e traz, além dos arquivos de sempre, `passos_livre.csv` (uma linha por passo), `resumo_livre.csv` (uma linha com as médias, bom para juntar coletas) e `tempos_passo.png`.
+
+```powershell
+uv run python captura_livre.py                  # pergunta a duração
+uv run python captura_livre.py --duracao 120    # para sozinha em 120 s
+uv run python captura_livre.py --reprocessar dados/participantes/Nome/20261027_150000_livre
+```
+
 ### `marcas_chao.py` e `analisar_sessoes.py` — Comprimento do passo contra marcas no chão e resumo de várias sessões
 
 O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUITOS` em `marcas_chao.py`: posição em cm e pé que pisa com o calcanhar). O `calculo_passo.py` usa o percurso de 20/10. O `piloto.py` usa os três numa coleta só:
