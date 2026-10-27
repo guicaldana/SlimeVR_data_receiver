@@ -19,6 +19,9 @@ import math
 import subprocess
 import threading
 import numpy as np
+import cadeia_pernas
+import marcas_chao
+import participante as cadastro
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import ThreadingOSCUDPServer
 
@@ -60,6 +63,7 @@ else:
 LIMIAR_MAD = 4.5                  # Z-score modificado para detecção de outliers
 
 # Compensação de atraso de fase do filtro SlimeVR OSC vs SolarXR (Seção 4 do relatório)
+CORRIGIR_SENTIDO_AP = True   # confere pelo balanço dos pés se o eixo AP aponta para a frente
 TAU_SYNC_OSC = 0.025          # 25 ms de compensação do smoothing/slerp do servidor SlimeVR
 
 # Limiares de classificação postural
@@ -80,15 +84,67 @@ TEMPO_CALIB_ESTATICA_S = 3.0  # 3 segundos de amostragem estática com ambos os 
 # True = altura da pelve congelada na calibração; False = pelve acompanha o tracker em tempo real
 PELVE_FIXA = True
 
+# Como medir a altura do pé:
+#   "osc"      = diferença de altura entre os pés no OSC (sobe junto com o tronco, mas os dois pés sobem igual)
+#   "cadeia"   = cadeia de transformações das pernas (coxa e canela do SolarXR, sem tronco)
+#   "mescla"   = média das duas
+#   "pipeline" = OSC com o tronco reto; conforme o tronco inclina, passa para a cadeia.
+#                Cada método recebe o seu próprio ganho na calibração da caixa.
+# A aceleração das IMUs continua servindo só para o tempo dos passos (heel-strike).
+MODO_ALTURA = "pipeline"
+TRONCO_RETO_GRAUS = 10.0       # até aqui só OSC (modo "pipeline")
+TRONCO_INCLINADO_GRAUS = 30.0  # a partir daqui só cadeia; entre os dois, transição linear
+# Na análise final, a escala da cadeia é ajustada para medir a mesma altura de passo
+# que o OSC na caminhada com o tronco reto (etapa "caminhada_reta" do roteiro).
+CADEIA_ESCALA_NA_MARCHA = False  # 20/10: desligado (o ganho da caixa acertou a caixa reta e inclinada)
+
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
 CALIBRAR_CAIXA = True
-ALTURA_CAIXA_CM = 6.7
+ALTURA_CAIXA_CM = 7.0    # caixa de calibração (antes de 23/10 o valor usado era 6,7)
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
+
+# Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
+# Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
+# (nome da etapa, segundos, instrução)
+ROTEIRO_GUIADO = True
+ROTEIRO = [
+    ("ir_inicio",           15, "Vá até o início da caminhada e fique parado"),
+    ("caminhada_reta",      15, "CAMINHE pisando com o calcanhar nas MARCAS (pé D na marca 0), tronco RETO"),
+    ("voltar_inicio",       15, "Volte ao início e prepare-se para caminhar inclinado"),
+    ("caminhada_inclinada", 15, "CAMINHE pisando nas MARCAS (pé D na marca 0), tronco INCLINADO (mais de 30°)"),
+    ("ir_caixa",            25, "Vá até a caixa e fique com os dois pés no chão, tronco reto"),
+    ("caixa_reto_ESQ",       7, "Pé ESQUERDO em cima da caixa, tronco RETO"),
+    ("chao_1",               6, "Pé de volta ao chão"),
+    ("caixa_reto_DIR",       7, "Pé DIREITO em cima da caixa, tronco RETO"),
+    ("chao_2",               6, "Pé de volta ao chão"),
+    ("inclinar",             6, "INCLINE o tronco para a frente (mais de 30°) e mantenha"),
+    ("caixa_incl_ESQ",       7, "Pé ESQUERDO em cima da caixa, tronco INCLINADO"),
+    ("chao_3",               6, "Pé de volta ao chão, continue inclinado"),
+    ("caixa_incl_DIR",       7, "Pé DIREITO em cima da caixa, tronco INCLINADO"),
+    ("chao_4",               6, "Pé de volta ao chão. Pode endireitar o tronco"),
+]
 
 # Arquivos de saída
 os.makedirs("dados", exist_ok=True)
 NOME_ARQUIVO_PASSOS = os.path.join("dados", "resultado_completo_marcha.csv")
 NOME_ARQUIVO_BRUTO = os.path.join("dados", "dados_brutos_sessao.csv")
+NOME_ARQUIVO_ENTRADA = os.path.join("dados", "dados_brutos_entrada.json")
+NOME_ARQUIVO_FASES = os.path.join("dados", "fases_sessao.csv")
+NOME_ARQUIVO_RELATORIO = os.path.join("dados", "relatorio.txt")
+# Antes do experimento o programa pede nome e altura do participante e grava tudo
+# em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/ (ver participante.py).
+PEDIR_PARTICIPANTE = True
+# Comprimento do passo: máximo da distância anteroposterior entre os pés em cada
+# platô (o pé da frente fica à frente até o outro passar). O contato do calcanhar
+# (aceleração) só marca o tempo do passo. False volta ao valor no instante do contato.
+COMPRIMENTO_PELO_PLATO = True
+PLATO_PERCENTIL = 100         # 100 = máximo do platô; 80 deixa o valor um pouco menor
+PLATO_LIMIAR_M = 0.05         # abaixo disso os pés estão lado a lado (fora do platô)
+PLATO_DURACAO_MIN_S = 0.15
+PLATO_JUNTAR_S = 0.5          # junta platôs do mesmo pé separados por menos que isso
+MOSTRAR_GRAFICOS = True       # abre as janelas dos gráficos no fim (os PNG são salvos de qualquer jeito)
+PASTA_COLETA = "dados"
+PARTICIPANTE = None           # {"nome": ..., "altura_cm": ...}
 INTERVALO_FEEDBACK = 0.20     # Atualização do terminal 5 vezes por segundo
 # ==============================================================
 
@@ -147,6 +203,11 @@ dados_imu = {
     "DIR": {"t": [], "ax": [], "ay": [], "az": [], "acc": []}
 }
 
+# Orientação das coxas e canelas (SolarXR) para a cadeia de transformações
+dados_quat = {seg: {"t": [], "q": []} for seg in cadeia_pernas.SEGMENTOS}
+quat_atual = {seg: None for seg in cadeia_pernas.SEGMENTOS}
+cadeia = None                    # CadeiaPernas calibrada (None = só OSC)
+
 tempo_inicial = None
 ultimo_feedback = 0
 lock = threading.Lock()
@@ -176,8 +237,16 @@ offset_calib_pernas = 0.0       # Equaliza a distância pélvica de ambos os pé
 chao_esq_ref = 0.0
 chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
+pitch_tronco_ref = 0.0           # Inclinação natural do peito na calibração (graus)
+fases_sessao = []                # (etapa, t0, t1) do roteiro guiado, no tempo da gravação
+etapa_atual = ""                 # texto curto mostrado na linha de feedback
+roteiro_terminou = False
+serie_altura = {}                # Série completa da altura (preenchida em calcular_sinais_completos)
 ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
 ganho_dir = 1.0                  # Fator de escala da altura do pé D (calibrado na caixa)
+# No modo "pipeline", cada método tem o seu ganho por pé: {"osc": (E, D), "cadeia": (E, D)}
+ganhos_metodo = {"osc": (1.0, 1.0), "cadeia": (1.0, 1.0)}
+ganhos_cadeia_caixa = []         # ganho da cadeia na caixa, antes do ajuste pela marcha
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -275,6 +344,8 @@ def osc_handler_9000(address, *args):
     tempo_atual = time.time()
 
     with lock:
+        if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+            return
         if tempo_inicial is None:
             tempo_inicial = tempo_atual
         t_rel = tempo_atual - tempo_inicial
@@ -315,6 +386,8 @@ def vmc_handler_39539(address, *args):
 
     bone_name = str(args[0])
     with lock:
+        if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+            return
         ossos_vmc_detectados.add(bone_name)
 
         alvo = OSSO_CABECA.lower()
@@ -348,6 +421,23 @@ def thread_leitor_solarxr(proc):
         if not rodando:
             break
         linha_str = linha.strip()
+        if linha_str.startswith("Q "):
+            partes = linha_str.split()
+            if len(partes) >= 6 and partes[1] in quat_atual:
+                try:
+                    q = tuple(float(v) for v in partes[2:6])
+                except ValueError:
+                    continue
+                agora = time.time()
+                with lock:
+                    if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+                        return
+                    if tempo_inicial is None:
+                        tempo_inicial = agora
+                    dados_quat[partes[1]]["t"].append(agora - tempo_inicial)
+                    dados_quat[partes[1]]["q"].append(q)
+                    quat_atual[partes[1]] = q
+            continue
         if not linha_str.startswith("D "):
             continue
 
@@ -369,6 +459,8 @@ def thread_leitor_solarxr(proc):
 
         agora = time.time()
         with lock:
+            if not rodando:  # captura encerrada: não mexe nos dados durante a análise
+                return
             if tempo_inicial is None:
                 tempo_inicial = agora
             t_rel = agora - tempo_inicial
@@ -477,6 +569,7 @@ def mostrar_feedback():
         r_coxa_e = rot_atual[TRACKER_COXA_ESQ]
         r_coxa_d = rot_atual[TRACKER_COXA_DIR]
         p_peito = rot_atual[TRACKER_PEITO]
+        quats = dict(quat_atual)
         t_init = tempo_inicial
         ult_imp = ultimo_impacto_str
 
@@ -503,21 +596,8 @@ def mostrar_feedback():
     d_ap, larg_lat = calcular_projecao_anteroposterior(p_esq, p_dir, r_quad, p_quad)
     d_ap_filtrada = euro_dist.filter(tempo, d_ap)
 
-    # 2. Folga Real do Solado com Pelve Fixa como Referencial Vertical
-    if p_quad is not None and calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
-        # Altura vertical de cada pé com a pelve mantida fixa (imune a inclinações de cabeça e tronco)
-        yq_uso = yq_ref if PELVE_FIXA else p_quad[1]
-        h_e = dist_qp_e_ref - (yq_uso - p_esq[1])
-        h_d = dist_qp_d_ref - (yq_uso - p_dir[1])
-        piso_apoio = min(h_e, h_d)
-        clearance_e_raw = max(0.0, (h_e - piso_apoio) * 100.0)
-        clearance_d_raw = max(0.0, (h_d - piso_apoio) * 100.0)
-    else:
-        y_e_norm = p_esq[1] - chao_esq_ref
-        y_d_norm = p_dir[1] - chao_dir_ref
-        piso_apoio = min(y_e_norm, y_d_norm)
-        clearance_e_raw = max(0.0, (y_e_norm - piso_apoio) * 100.0)
-        clearance_d_raw = max(0.0, (y_d_norm - piso_apoio) * 100.0)
+    # 2. Altura de cada pé acima do outro (OSC, cadeia das pernas ou mescla: MODO_ALTURA)
+    clearance_e_raw, clearance_d_raw = _clearance_bruto_cm(p_esq, p_dir, p_quad, quats, p_peito)
 
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_e_raw *= ganho_esq
@@ -558,6 +638,8 @@ def mostrar_feedback():
     str_trc = f" | Trc:{p_peito:+4.0f}°" if p_peito is not None else ""
     str_imu = f" | IMU:{ult_imp}" if (a_e > 0 or a_d > 0) else ""
 
+    if etapa_atual:
+        str_calib = f"{str_calib} | {etapa_atual}"
     print(f"\r  ⏱ {tempo:4.1f}s | {str_estado:<21} | {str_passo} ({str_base}) | {str_alt}{str_quad}{str_trc}{str_imu}{str_calib}  ", end="", flush=True)
 
 
@@ -570,6 +652,65 @@ def aplicar_filtro(sinal, frequencia_corte, taxa_amostragem):
         return sinal
     b, a = butter(2, freq_norm, btype='low')
     return filtfilt(b, a, sinal)
+
+
+def alturas_cadeia_serie(t_comum, taxa_amostragem):
+    """Série da altura (cm) de cada pé acima do outro pela cadeia das pernas, ou (None, None)."""
+    if cadeia is None or MODO_ALTURA == "osc":
+        return None, None
+    series = {}
+    for seg in cadeia_pernas.SEGMENTOS:
+        d = dados_quat[seg]
+        if len(d["t"]) < 10:
+            return None, None
+        series[seg] = (np.array(d["t"]), np.array(d["q"]))
+    dif = cadeia.dif_vertical(cadeia_pernas.quats_em(series, t_comum))
+    dif = aplicar_filtro(dif, 5.0, taxa_amostragem)
+    e, d = cadeia_pernas.CadeiaPernas.alturas_pes(dif)
+    return e * 100.0, d * 100.0
+
+
+def _picos_balanco(x, minimo=1.5, fim=0.5):
+    """Altura máxima de cada balanço (trecho em que o pé sai do chão)."""
+    picos, i, n = [], 0, len(x)
+    while i < n:
+        if x[i] > minimo:
+            j = i
+            while j < n and x[j] > fim:
+                j += 1
+            picos.append(float(np.max(x[i:j])))
+            i = j
+        else:
+            i += 1
+    return picos
+
+
+def escalar_cadeia_pela_marcha(t, osc_e, osc_d, cad_e, cad_d, pitch_serie):
+    """Ajusta o ganho da cadeia para que, na caminhada com o tronco reto, ela meça
+    a mesma altura de passo que o OSC (já com o ganho da caixa). Assim a troca do
+    pipeline não muda a escala da medida no meio da caminhada."""
+    janela = None
+    for nome, t0, t1 in fases_sessao:
+        if nome == "caminhada_reta":
+            janela = (t >= t0) & (t <= t1)
+    if janela is None:
+        # Sem roteiro: usa todos os trechos com o tronco reto
+        if pitch_serie is None:
+            return
+        janela = peso_cadeia(pitch_serie) <= 0.0
+    go = ganhos_metodo["osc"]
+    novos = list(ganhos_metodo["cadeia"])
+    for i, (o, c) in enumerate(((osc_e, cad_e), (osc_d, cad_d))):
+        po = _picos_balanco(o[janela] * go[i])
+        pc = _picos_balanco(c[janela])
+        if len(po) < 3 or len(pc) < 3 or np.median(pc) <= 0:
+            continue
+        novos[i] = float(np.clip(np.median(po) / np.median(pc), 0.2, 3.0))
+    print(f"      • Ganho da cadeia na marcha: E {novos[0]:.2f} | D {novos[1]:.2f} "
+          f"(caixa: E {ganhos_metodo['cadeia'][0]:.2f} | D {ganhos_metodo['cadeia'][1]:.2f})")
+    if not ganhos_cadeia_caixa:
+        ganhos_cadeia_caixa[:] = list(ganhos_metodo["cadeia"])
+    ganhos_metodo["cadeia"] = tuple(novos)
 
 
 def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None):
@@ -632,6 +773,18 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
     d_passo_ap = dx * fx + dz * fz
     d_passo_ap_filt = aplicar_filtro(d_passo_ap, 4.0, taxa_amostragem)
 
+    # Confere o sentido do eixo anteroposterior pelos próprios dados: enquanto o pé
+    # ESQ está no ar, ele avança em relação ao pé D, então (E - D) tem que crescer.
+    # Se crescer ao contrário, o eixo do quadril aponta para trás e o sinal é invertido.
+    if CORRIGIR_SENTIDO_AP:
+        dif_alt = y_e_norm - y_d_norm
+        no_ar = np.abs(dif_alt) > 0.02
+        if np.count_nonzero(no_ar) > 50:
+            sentido = float(np.sum(np.gradient(d_passo_ap_filt)[no_ar] * dif_alt[no_ar]))
+            if sentido < 0:
+                d_passo_ap_filt = -d_passo_ap_filt
+                print("      • Eixo anteroposterior invertido (o quadril apontava para trás); sinal corrigido.")
+
     # Largura da base de suporte lateral (Step Width)
     largura_base_m = np.abs(dx * fz - dz * fx)
 
@@ -668,6 +821,24 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
         elev_tornoz_esq = clearance_esq
         elev_tornoz_dir = clearance_dir
 
+    # Cadeia das pernas (SolarXR) e mescla com o OSC, conforme MODO_ALTURA
+    cad_e, cad_d = alturas_cadeia_serie(t_comum, taxa_amostragem)
+    pitch_serie = None
+    d_peito = dados[TRACKER_PEITO]
+    if len(d_peito["t"]) > 10:
+        pitch_serie = np.interp(t_comum, np.array(d_peito["t"]), np.array(d_peito["pitch"]))
+    osc_e_bruto, osc_d_bruto = clearance_esq.copy(), clearance_dir.copy()
+    if MODO_ALTURA == "pipeline" and CADEIA_ESCALA_NA_MARCHA and cad_e is not None:
+        escalar_cadeia_pela_marcha(t_comum, osc_e_bruto, osc_d_bruto, cad_e, cad_d, pitch_serie)
+    clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d, pitch_serie)
+    serie_altura.clear()
+    serie_altura.update({
+        "t": t_comum, "osc_esq_cm": osc_e_bruto, "osc_dir_cm": osc_d_bruto,
+        "cadeia_esq_cm": cad_e, "cadeia_dir_cm": cad_d, "tronco_graus": pitch_serie,
+        "peso_cadeia": (peso_cadeia(pitch_serie) * np.ones_like(t_comum)
+                        if MODO_ALTURA == "pipeline" and cad_e is not None else None),
+    })
+
     # Ganho por pé calibrado com a caixa de altura conhecida
     clearance_esq = clearance_esq * ganho_esq
     clearance_dir = clearance_dir * ganho_dir
@@ -677,6 +848,8 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
     # Aplica zona morta de estabilização contra ruído e tremor no solo
     clearance_esq[clearance_esq < limiar_ruido_chao] = 0.0
     clearance_dir[clearance_dir < limiar_ruido_chao] = 0.0
+    serie_altura["altura_esq_cm"] = clearance_esq
+    serie_altura["altura_dir_cm"] = clearance_dir
     elev_tornoz_esq[elev_tornoz_esq < limiar_ruido_chao] = 0.0
     elev_tornoz_dir[elev_tornoz_dir < limiar_ruido_chao] = 0.0
 
@@ -708,7 +881,10 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
         # Cálculo do Jerk (derivada temporal da aceleração)
         jerk = np.gradient(acc_filtrada, 1.0 / taxa_amostragem)
 
-        dist_min_pts = int(taxa_amostragem * DIST_MIN_MESMO_PE_S)
+        # Distância curta aqui: o impulso (toe-off) do mesmo pé pode ser maior que o
+        # heel-strike e, com a distância de um ciclo, o esconderia. A polaridade AP abaixo
+        # descarta o impulso, e o filtro de coerência depois garante um passo por ciclo.
+        dist_min_pts = int(taxa_amostragem * 0.20)
 
         picos, _ = find_peaks(
             acc_filtrada,
@@ -811,6 +987,75 @@ def detectar_passos_multimodal(t_comum, d_passo_ap, taxa_amostragem):
     return tempos, comprimentos, impactos, pes, projecoes
 
 
+def platos_anteroposteriores(t, d_ap):
+    """Platôs da distância anteroposterior entre os pés.
+
+    d_ap > 0: pé ESQ à frente; d_ap < 0: pé DIR à frente. Cada platô vai de uma
+    passagem por zero (|d_ap| < PLATO_LIMIAR_M) à seguinte. Platôs seguidos do
+    mesmo pé com pausa curta são juntados. Retorna lista de dicts
+    {t0, t1, pe, comprimento_m, t_max}."""
+    t = np.asarray(t); d = np.asarray(d_ap)
+    sinal = np.sign(d)
+    sinal[np.abs(d) < PLATO_LIMIAR_M] = 0
+    platos, i, n = [], 0, len(d)
+    while i < n:
+        if sinal[i] == 0:
+            i += 1
+            continue
+        j = i
+        while j < n and sinal[j] == sinal[i]:
+            j += 1
+        if t[j - 1] - t[i] >= PLATO_DURACAO_MIN_S:
+            pe = "ESQ" if sinal[i] > 0 else "DIR"
+            if platos and platos[-1]["pe"] == pe and t[i] - platos[-1]["t1"] < PLATO_JUNTAR_S:
+                platos[-1]["t1"] = float(t[j - 1])
+                platos[-1]["fim"] = j
+            else:
+                platos.append({"t0": float(t[i]), "t1": float(t[j - 1]), "pe": pe, "ini": i, "fim": j})
+        i = j
+    for p in platos:
+        trecho = np.abs(d[p["ini"]:p["fim"]])
+        p["comprimento_m"] = float(np.percentile(trecho, PLATO_PERCENTIL))
+        p["t_max"] = float(t[p["ini"] + int(np.argmax(trecho))])
+    return platos
+
+
+def comprimento_pelo_plato(t, d_ap, tempos, comprimentos, impactos, pes, projecoes):
+    """Troca o comprimento de cada passo pelo valor do platô em que ele caiu.
+
+    - O pé do passo passa a ser o do platô (o que ficou à frente).
+    - Duas detecções no mesmo platô viram um passo só (fica a primeira).
+    - Um platô sem detecção vira um passo marcado com '*' (sem impacto da IMU),
+      no instante em que o pé atinge o máximo.
+    - Detecções fora de qualquer platô (pés lado a lado) são descartadas."""
+    platos = platos_anteroposteriores(t, d_ap)
+    if not platos:
+        return tempos, comprimentos, impactos, pes, projecoes
+    t = np.asarray(t); d = np.asarray(d_ap)
+    usados = {}
+    for k, t_k in enumerate(tempos):
+        dentro = [i for i, p in enumerate(platos) if p["t0"] <= t_k <= p["t1"]]
+        if not dentro:
+            perto = [i for i, p in enumerate(platos) if p["t0"] - 0.3 <= t_k <= p["t1"] + 0.3
+                     and p["pe"] in str(pes[k])]
+            dentro = sorted(perto, key=lambda i: min(abs(t_k - platos[i]["t0"]), abs(t_k - platos[i]["t1"])))
+        if dentro and dentro[0] not in usados:
+            usados[dentro[0]] = k
+    novos = []
+    for i, p in enumerate(platos):
+        sinal = 1.0 if p["pe"] == "ESQ" else -1.0
+        if i in usados:
+            k = usados[i]
+            imu = "*" not in str(pes[k])
+            novos.append((float(tempos[k]), p["comprimento_m"], float(impactos[k]),
+                          p["pe"] + ("" if imu else "*"), sinal * p["comprimento_m"]))
+        else:
+            novos.append((p["t_max"], p["comprimento_m"], 0.0, p["pe"] + "*", sinal * p["comprimento_m"]))
+    novos.sort(key=lambda x: x[0])
+    tt, cc, ii, pp, jj = zip(*novos)
+    return np.array(tt), np.array(cc), np.array(ii), np.array(pp), np.array(jj)
+
+
 def calcular_alturas_passos(t, tempos_impactos, pes_impactos, elevacao_esq_cm, elevacao_dir_cm):
     """Calcula a altura máxima (clearance em cm) atingida no balanço anterior ao impacto."""
     alturas = []
@@ -849,22 +1094,30 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
                               alt_quadril_cm, posturas,
                               tempos_impactos, dist_impactos, impactos_ms2,
                               clearances_passos_cm, tornozelos_passos_cm,
-                              pes_passos, projecoes_ap, mascara_validos):
+                              pes_passos, projecoes_ap, mascara_validos, reais_m=None):
     print("\n\n" + "=" * 90)
     print("      RELATÓRIO CLÍNICO & BIOMECÂNICO: ARQUITETURA DE FUSÃO SOLARXR + SLIMEVR")
     print("=" * 90)
 
     n_total = len(dist_impactos)
     n_outliers = np.sum(~mascara_validos)
-    passos_validos = dist_impactos[mascara_validos]
-    tempos_validos = tempos_impactos[mascara_validos]
-    clearances_validos = clearances_passos_cm[mascara_validos]
-    tornozelos_validos = tornozelos_passos_cm[mascara_validos]
-    pes_validos = pes_passos[mascara_validos]
+    # Com o roteiro guiado, as estatísticas da marcha usam só os passos das caminhadas
+    etapas_passos = [etapa_no_instante(t_p) for t_p in tempos_impactos]
+    na_marcha = np.array([e.startswith("caminhada") for e in etapas_passos])
+    if not np.any(na_marcha):
+        na_marcha = np.ones(n_total, dtype=bool)
+    sel = mascara_validos & na_marcha
+    passos_validos = dist_impactos[sel]
+    tempos_validos = tempos_impactos[sel]
+    clearances_validos = clearances_passos_cm[sel]
+    tornozelos_validos = tornozelos_passos_cm[sel]
+    pes_validos = pes_passos[sel]
 
     duracao = t_passo[-1]
     print(f"Duração da sessão:       {duracao:.1f} s")
-    print(f"Passos detectados:       {n_total} (Válidos: {len(passos_validos)} | Outliers MAD: {n_outliers})")
+    print(f"Passos detectados:       {n_total} (Outliers MAD: {n_outliers})")
+    if not np.all(na_marcha):
+        print(f"Passos nas caminhadas:   {int(np.sum(na_marcha))} (válidos: {len(passos_validos)}); as estatísticas abaixo usam só esses")
 
     # 1. Estatística Postural
     dt_amostra = np.mean(np.diff(t_passo)) if len(t_passo) > 1 else 0.01
@@ -892,22 +1145,10 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     else:
         tronco_nos_passos = [0.0] * n_total
 
-    tem_cabeca = len(dados["cabeca"]["t"]) >= 10
-    cabeca_nos_passos = []
-    if tem_cabeca:
-        t_cabeca = np.array(dados["cabeca"]["t"])
-        pitch_cabeca = np.array(dados["cabeca"]["pitch"])
-        cabeca_nos_passos = np.interp(tempos_impactos, t_cabeca, pitch_cabeca)
-        dt_c = np.mean(np.diff(t_cabeca)) if len(t_cabeca) > 1 else 0.02
-        t_neutro = np.sum((pitch_cabeca >= LIMIAR_BAIXO) & (pitch_cabeca <= LIMIAR_CIMA)) * dt_c
-        pct_neutro = (t_neutro / duracao) * 100 if duracao > 0 else 0
-        print(f"\n--- 3. Atenção Visual e Orientação da Cabeça (VMC) ---")
-        print(f"  Inclinação média: {np.mean(pitch_cabeca):+.1f}° | Olhar Frente: {pct_neutro:.1f}% do tempo")
-    else:
-        cabeca_nos_passos = [0.0] * n_total
-
     # 3. Parâmetros Espaciais da Marcha
-    print(f"\n--- 4. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
+    if PARTICIPANTE:
+        print(f"\n--- Participante: {PARTICIPANTE['nome']} | altura {PARTICIPANTE['altura_cm']:.1f} cm ---")
+    print(f"\n--- 3. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---")
     if len(passos_validos) > 0:
         media_passo = np.mean(passos_validos)
         desvio_passo = np.std(passos_validos)
@@ -918,6 +1159,8 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         media_base = np.mean(larg_base_m) * 100.0
 
         print(f"  Comprimento médio da passada: {media_passo:.3f} m (± {desvio_passo:.3f} m)")
+        if PARTICIPANTE:
+            print(f"  Comprimento / altura:         {media_passo * 100 / PARTICIPANTE['altura_cm']:.2f}")
         print(f"  Largura média da base (X):    {media_base:.1f} cm (Base de suporte lateral)")
         print(f"  Clearance Real do Solado:     {media_clear:.1f} cm (± {desvio_clear:.1f} cm) [Folga solo-sapato: 1.5 - 4.5 cm]")
         print(f"  Elevação Tornozelo / Flexão:  {media_torn:.1f} cm (± {desvio_torn:.1f} cm) [Encurtamento joelho: 10 - 18 cm]")
@@ -939,8 +1182,12 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
             simetria = (1.0 - abs(d_e - d_d) / ((d_e + d_d) / 2.0)) * 100.0
             print(f"  Índice de Simetria do Passo:  {simetria:.1f}%")
 
-        if len(tempos_validos) >= 2:
-            cadencia = 60.0 / np.mean(np.diff(tempos_validos))
+        # Cadência só entre passos seguidos da mesma caminhada (não conta a pausa entre elas)
+        etapas_sel = np.array(etapas_passos)[sel]
+        intervalos = [b - a for a, b, ea, eb in zip(tempos_validos[:-1], tempos_validos[1:], etapas_sel[:-1], etapas_sel[1:])
+                      if ea == eb]
+        if intervalos:
+            cadencia = 60.0 / np.mean(intervalos)
             print(f"  Cadência estimada:            {cadencia:.1f} passos/min")
 
         # 4. Biomarcadores Específicos para Doença de Parkinson (Seção 5 da Nota Técnica)
@@ -950,7 +1197,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         n_baixo_clearance = np.sum(clearances_validos < 2.0)
         pct_baixo_clearance = (n_baixo_clearance / len(clearances_validos)) * 100.0
 
-        print(f"\n--- 5. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---")
+        print(f"\n--- 4. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---")
         if cv_passo > 10.0:
             alerta_cv = "⚠ ALTO (Elevado Risco de Quedas)"
         elif cv_passo >= 6.0:
@@ -965,39 +1212,43 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
 
     # 5. Tabela Integrada
     print("\n--- Tabela Integrada Passo a Passo (Sincronia Heel-Strike SolarXR + Projeção Anteroposterior) ---")
-    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Solado(cm)':<12} {'Tornoz(cm)':<12} {'Tronco':<10} {'Olhar':<14} {'Status'}")
+    print(f"{'#':<4} {'Tempo(s)':<9} {'Pé':<6} {'Etapa':<20} {'Impacto(m/s²)':<15} {'Comprim.(m)':<13} {'Solado(cm)':<12} {'Tornoz(cm)':<12} {'Tronco':<10} {'Status'}")
     print("-" * 110)
-    for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p, cb_p) in enumerate(zip(
-        tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
+    for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p) in enumerate(zip(
+        tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos
     )):
         valido = mascara_validos[i]
         status = "Válido" if valido else "⚠ Outlier"
-        _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
         tr_str = f"{tr_p:+.1f}°" if tem_peito else "N/A"
-        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {imp_p:<15.1f} {d_p:<13.3f} {cl_p:<12.1f} {tn_p:<12.1f} {tr_str:<10} {olhar_lbl:<14} {status}")
+        print(f"{i+1:<4} {t_p:<9.2f} {pe_p:<6} {etapas_passos[i]:<20} {imp_p:<15.1f} {d_p:<13.3f} {cl_p:<12.1f} {tn_p:<12.1f} {tr_str:<10} {status}")
     print("=" * 110)
 
     # 6. Salva CSV Unificado
     with open(NOME_ARQUIVO_PASSOS, mode='w', newline='', encoding="utf-8") as f:
         escritor = csv.writer(f)
+        nome_p = PARTICIPANTE["nome"] if PARTICIPANTE else ""
+        altura_p = PARTICIPANTE["altura_cm"] if PARTICIPANTE else None
+        reais = reais_m or {}
         escritor.writerow([
-            "Passo", "Tempo_HeelStrike_s", "Pe_Impacto", "Impacto_IMU_ms2", "Comprimento_m",
-            "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Cabeca_Pitch_graus", "Estado_Olhar", "Outlier"
+            "Participante", "Altura_participante_cm", "Passo", "Etapa", "Tempo_HeelStrike_s", "Pe_Impacto",
+            "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
+            "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Outlier"
         ])
-        for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p, cb_p) in enumerate(zip(
-            tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos, cabeca_nos_passos
+        for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p) in enumerate(zip(
+            tempos_impactos, dist_impactos, impactos_ms2, clearances_passos_cm, tornozelos_passos_cm, pes_passos, tronco_nos_passos
         )):
-            _, olhar_lbl = classificar_olhar(cb_p) if tem_cabeca else ("", "N/A")
             escritor.writerow([
-                i+1, f"{t_p:.3f}", pe_p, f"{imp_p:.2f}", f"{d_p:.3f}", f"{cl_p:.2f}", f"{tn_p:.2f}",
-                f"{tr_p:.2f}", f"{cb_p:.2f}", olhar_lbl, "NAO" if mascara_validos[i] else "SIM"
+                nome_p, f"{altura_p:.1f}" if altura_p else "", i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
+                f"{imp_p:.2f}", f"{d_p:.3f}", f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
+                f"{reais[i]:.3f}" if i in reais else "",
+                f"{cl_p:.2f}", f"{tn_p:.2f}", f"{tr_p:.2f}", "NAO" if mascara_validos[i] else "SIM"
             ])
     print(f"\nResultados consolidados salvos em '{NOME_ARQUIVO_PASSOS}'.")
 
     # ================= GRÁFICOS INTEGRADOS =================
     import matplotlib.pyplot as plt
     tem_imu_plot = len(dados_imu["ESQ"]["t"]) > 20 or len(dados_imu["DIR"]["t"]) > 20
-    painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + (1 if tem_cabeca else 0) + 1
+    painéis_extras = (1 if tem_imu_plot else 0) + (1 if tem_peito else 0) + 1
     total_subplots = 3 + painéis_extras
     fig, axes = plt.subplots(total_subplots, 1, figsize=(14, 2.5 * total_subplots), sharex=False)
 
@@ -1085,21 +1336,6 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         ax_tr.grid(True, alpha=0.3)
         idx_ax += 1
 
-    # Painel 6: Cabeça / Olhar
-    if tem_cabeca:
-        ax_cb = axes[idx_ax]
-        t_cb = np.array(dados["cabeca"]["t"])
-        pitch_cb = np.array(dados["cabeca"]["pitch"])
-        ax_cb.plot(t_cb, pitch_cb, color='black', linewidth=1.2, label='Olhar / Cabeça (Pitch)')
-        ax_cb.axhline(0, color='gray', linestyle=':')
-        ax_cb.axhspan(LIMIAR_BAIXO, LIMIAR_CIMA, color='mediumseagreen', alpha=0.15, label='Frente')
-        ax_cb.axhspan(-90, LIMIAR_MUITO_BAIXO, color='tomato', alpha=0.20, label='Chão')
-        ax_cb.set_ylabel('Cabeça (°)')
-        ax_cb.set_title('6. Atenção Visual (Inclinação da Cabeça)', fontweight="bold")
-        ax_cb.legend(loc='upper right', fontsize=8)
-        ax_cb.grid(True, alpha=0.3)
-        idx_ax += 1
-
     # Painel 7: Barras Passo a Passo
     ax_bar = axes[idx_ax]
     x_indices = np.arange(1, n_total + 1)
@@ -1108,7 +1344,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar.axhline(0.30, color='goldenrod', linestyle='--', alpha=0.8, label='Limiar Microbasia (30 cm)')
     ax_bar.set_ylabel('Comprimento (m)', color='steelblue')
     ax_bar.set_xlabel('Número do Passo')
-    ax_bar.set_title('7. Comprimento de Passo vs Altura Real com Biomarcadores de Parkinson', fontweight="bold")
+    ax_bar.set_title('6. Comprimento de Passo vs Altura Real com Biomarcadores de Parkinson', fontweight="bold")
     ax_bar.set_xticks(x_indices)
 
     ax_bar_twin = ax_bar.twinx()
@@ -1116,8 +1352,133 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
     ax_bar_twin.set_ylabel('Clearance Solado (cm)', color='coral')
     ax_bar.grid(True, alpha=0.3, axis='x')
 
+    if PARTICIPANTE:
+        fig.suptitle(f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm", fontweight="bold")
     plt.tight_layout()
-    plt.show()
+    salvar_figura(fig, "painel_completo.png")
+
+    graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_impactos,
+                    clearances_passos_cm, pes_passos, mascara_validos, etapas_passos, reais)
+
+
+def salvar_figura(fig, nome):
+    arq = os.path.join(PASTA_COLETA, nome)
+    try:
+        fig.savefig(arq, dpi=130)
+        print(f"Gráfico salvo em {arq}")
+    except Exception as e:
+        print(f"Não foi possível salvar {arq}: {e}")
+
+
+def etapa_no_instante(t):
+    """Nome da etapa do roteiro em que o instante t caiu ('' sem roteiro).
+
+    Um passo até 1 s depois do fim de uma caminhada ainda conta para ela
+    (o último passo costuma fechar logo depois do aviso)."""
+    for nome, t0, t1 in fases_sessao:
+        if t0 <= t <= t1:
+            return nome
+    for nome, t0, t1 in fases_sessao:
+        if nome.startswith("caminhada") and t1 < t <= t1 + 1.0:
+            return nome
+    return ""
+
+
+def _grupos_marcha(etapas_passos):
+    """Índices dos passos de cada caminhada; sem roteiro, todos os passos num grupo só."""
+    nomes = [n for n, _, _ in fases_sessao if n.startswith("caminhada")]
+    if not nomes:
+        return [("marcha", list(range(len(etapas_passos))))]
+    return [(n, [i for i, e in enumerate(etapas_passos) if e == n]) for n in nomes]
+
+
+def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_impactos,
+                    clearances_passos_cm, pes_passos, mascara_validos, etapas_passos, reais):
+    """Gráficos de comprimento e altura do passo, só com os passos das caminhadas."""
+    import matplotlib.pyplot as plt
+    grupos = _grupos_marcha(etapas_passos)
+    cor_pe = {"ESQ": "darkorange", "DIR": "green"}
+    titulo_p = (f"{PARTICIPANTE['nome']} · altura {PARTICIPANTE['altura_cm']:.0f} cm"
+                if PARTICIPANTE else "")
+    rotulo = {"caminhada_reta": "Caminhada reta", "caminhada_inclinada": "Caminhada inclinada", "marcha": "Marcha"}
+
+    def barras(ax, idx, valores, unidade, fator, ref=None):
+        x = np.arange(1, len(idx) + 1)
+        for k, i in enumerate(idx):
+            lado = "DIR" if "DIR" in pes_passos[i] else "ESQ"
+            ok = bool(mascara_validos[i])
+            ax.bar(x[k], valores[i] * fator, color=cor_pe[lado], alpha=0.9 if ok else 0.3,
+                   hatch=None if ok else "//", edgecolor="k" if not ok else None, linewidth=0.5)
+            ax.text(x[k], valores[i] * fator, f"{valores[i] * fator:.0f}", ha="center", va="bottom", fontsize=8)
+            if ref is not None and i in ref:
+                ax.plot([x[k] - 0.4, x[k] + 0.4], [ref[i] * fator] * 2, color="k", lw=2)
+        ax.set_xticks(x, [f"{k}\n{'D' if 'DIR' in pes_passos[i] else 'E'}" for k, i in zip(x, idx)])
+        ax.set_ylabel(unidade)
+        topo = max([valores[i] * fator for i in idx] + [ref[i] * fator for i in idx if ref and i in ref] + [1.0])
+        ax.set_ylim(0, topo * 1.3)
+        ax.grid(True, alpha=0.3, axis="y")
+
+    def resumo(idx, valores, fator, un):
+        v = np.array([valores[i] for i in idx if mascara_validos[i]]) * fator
+        if len(v) == 0:
+            return "sem passos válidos"
+        txt = f"média {v.mean():.1f} ± {v.std():.1f} {un} ({len(v)} passos)"
+        for lado, ch in (("ESQ", "E"), ("DIR", "D")):
+            vl = np.array([valores[i] for i in idx if mascara_validos[i] and lado in pes_passos[i]]) * fator
+            if len(vl):
+                txt += f" | {ch} {vl.mean():.1f}"
+        return txt
+
+    # Comprimento do passo
+    fig, axes = plt.subplots(len(grupos), 1, figsize=(10, 3.4 * len(grupos)), squeeze=False)
+    for ax, (nome, idx) in zip(axes[:, 0], grupos):
+        if not idx:
+            ax.set_title(f"{rotulo.get(nome, nome)}: nenhum passo detectado"); ax.axis("off"); continue
+        barras(ax, idx, dist_impactos, "Comprimento (cm)", 100.0, reais)
+        txt = resumo(idx, dist_impactos, 100.0, "cm")
+        if PARTICIPANTE:
+            v = [dist_impactos[i] for i in idx if mascara_validos[i]]
+            if v:
+                txt += f" | comprimento/altura {np.mean(v) * 100 / PARTICIPANTE['altura_cm']:.2f}"
+        ax.set_title(f"{rotulo.get(nome, nome)}: {txt}", fontsize=10)
+    axes[-1, 0].set_xlabel("Passo (pé que pisou)")
+    axes[0, 0].plot([], [], color="darkorange", lw=6, label="Pé E")
+    axes[0, 0].plot([], [], color="green", lw=6, label="Pé D")
+    if reais:
+        axes[0, 0].plot([], [], color="k", lw=2, label="Marca no chão")
+    axes[0, 0].legend(fontsize=8, loc="upper right", ncol=3)
+    fig.suptitle("Comprimento do passo" + (f" · {titulo_p}" if titulo_p else ""), fontweight="bold")
+    fig.tight_layout()
+    salvar_figura(fig, "comprimento_passo.png")
+
+    # Altura do passo: série no tempo + barras por passo
+    fig, axes = plt.subplots(len(grupos), 2, figsize=(13, 3.4 * len(grupos)), squeeze=False,
+                             gridspec_kw={"width_ratios": [1.6, 1]})
+    for (ax_t, ax_b), (nome, idx) in zip(axes, grupos):
+        fase = [(a, b) for n, a, b in fases_sessao if n == nome]
+        if fase:
+            a, b = fase[0]
+            m = (t_passo >= a) & (t_passo <= b + 1.0)
+        else:
+            m = np.ones(len(t_passo), dtype=bool)
+        ax_t.plot(t_passo[m], clear_esq_cm[m], color="darkorange", lw=1.3, label="Pé E")
+        ax_t.plot(t_passo[m], clear_dir_cm[m], color="green", lw=1.3, label="Pé D")
+        for i in idx:
+            ax_t.axvline(tempos_impactos[i], color="gray", lw=0.6, ls=":")
+        ax_t.set_ylabel("Altura do pé (cm)")
+        ax_t.set_xlabel("Tempo (s)")
+        ax_t.set_title(rotulo.get(nome, nome), fontsize=10)
+        ax_t.legend(fontsize=8, loc="upper right")
+        ax_t.grid(True, alpha=0.3)
+        if idx:
+            barras(ax_b, idx, clearances_passos_cm, "Altura máxima (cm)", 1.0)
+            ax_b.set_title(resumo(idx, clearances_passos_cm, 1.0, "cm"), fontsize=9)
+            ax_b.set_xlabel("Passo (pé que pisou)")
+        else:
+            ax_b.axis("off")
+    fig.suptitle("Altura do passo" + (f" · {titulo_p}" if titulo_p else ""), fontweight="bold")
+    fig.tight_layout()
+    salvar_figura(fig, "altura_passo.png")
 
 
 # ----------------- EXECUÇÃO PRINCIPAL -----------------
@@ -1131,8 +1492,52 @@ def rodar_servidor(porta, handler):
         print(f"\n[AVISO] Erro na porta {porta}: {e}")
 
 
-def _clearance_bruto_cm(p_esq, p_dir, p_quad):
-    """Folga bruta (cm) de cada pé, sem ganho, com a mesma fórmula do feedback ao vivo."""
+def _clearance_cadeia_cm(quats):
+    """Altura (cm) de cada pé acima do outro pela cadeia das pernas, ou None se indisponível."""
+    if cadeia is None or any(quats.get(seg) is None for seg in cadeia_pernas.SEGMENTOS):
+        return None
+    dif = cadeia.dif_vertical({seg: np.array([quats[seg]]) for seg in cadeia_pernas.SEGMENTOS})
+    e, d = cadeia_pernas.CadeiaPernas.alturas_pes(dif)
+    return float(e[0]) * 100.0, float(d[0]) * 100.0
+
+
+def peso_cadeia(pitch_tronco):
+    """Peso da cadeia no modo "pipeline": 0 com o tronco reto, 1 com o tronco inclinado."""
+    if pitch_tronco is None:
+        return 0.0
+    faixa = max(1e-6, TRONCO_INCLINADO_GRAUS - TRONCO_RETO_GRAUS)
+    inclinacao = np.abs(np.asarray(pitch_tronco, dtype=float) - pitch_tronco_ref)
+    return np.clip((inclinacao - TRONCO_RETO_GRAUS) / faixa, 0.0, 1.0)
+
+
+def combinar_alturas(osc_e, osc_d, cad_e, cad_d, pitch_tronco=None):
+    """Junta as alturas do OSC e da cadeia conforme MODO_ALTURA (aceita escalares ou arrays)."""
+    if cad_e is None or MODO_ALTURA == "osc":
+        if MODO_ALTURA == "pipeline":
+            g = ganhos_metodo["osc"]
+            return osc_e * g[0], osc_d * g[1]
+        return osc_e, osc_d
+    if MODO_ALTURA == "cadeia":
+        return cad_e, cad_d
+    if MODO_ALTURA == "pipeline":
+        go, gc = ganhos_metodo["osc"], ganhos_metodo["cadeia"]
+        w = peso_cadeia(pitch_tronco)
+        return ((1.0 - w) * osc_e * go[0] + w * cad_e * gc[0],
+                (1.0 - w) * osc_d * go[1] + w * cad_d * gc[1])
+    return (osc_e + cad_e) / 2.0, (osc_d + cad_d) / 2.0
+
+
+def _clearance_bruto_cm(p_esq, p_dir, p_quad, quats=None, pitch_tronco=None):
+    """Folga bruta (cm) de cada pé no modo MODO_ALTURA (sem o ganho global da caixa)."""
+    osc_e, osc_d = _clearance_osc_cm(p_esq, p_dir, p_quad)
+    cad = _clearance_cadeia_cm(quats if quats is not None else quat_atual)
+    if cad is None:
+        return combinar_alturas(osc_e, osc_d, None, None, pitch_tronco)
+    return combinar_alturas(osc_e, osc_d, cad[0], cad[1], pitch_tronco)
+
+
+def _clearance_osc_cm(p_esq, p_dir, p_quad):
+    """Folga bruta (cm) de cada pé pelo OSC (diferença entre os pés)."""
     if p_quad is not None and calibrado and dist_qp_e_ref > 0 and dist_qp_d_ref > 0:
         yq_uso = yq_ref if PELVE_FIXA else p_quad[1]
         h_e = dist_qp_e_ref - (yq_uso - p_esq[1])
@@ -1146,7 +1551,7 @@ def _clearance_bruto_cm(p_esq, p_dir, p_quad):
 
 def calibrar_ganho_caixa():
     """Pede para pisar na caixa com cada pé e calcula o fator de escala por pé."""
-    global ganho_esq, ganho_dir
+    global ganho_esq, ganho_dir, ganhos_metodo
     print("\n" + "=" * 90)
     print(f"   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM CAIXA DE {ALTURA_CAIXA_CM:.1f} CM")
     print("=" * 90)
@@ -1160,15 +1565,35 @@ def calibrar_ganho_caixa():
         print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
 
         amostras = []
+        amostras_osc, amostras_cad = [], []
         t_fim = time.time() + TEMPO_CAIXA_S
         while time.time() < t_fim and rodando:
             with lock:
                 pe = pos_atual[TORNOZELO_ESQ]
                 pd = pos_atual[TORNOZELO_DIR]
                 pq = pos_atual[TRACKER_QUADRIL]
+                qs = dict(quat_atual)
             if pe is not None and pd is not None:
-                amostras.append(_clearance_bruto_cm(pe, pd, pq)[idx])
+                amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
+                amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
+                cad = _clearance_cadeia_cm(qs)
+                if cad is not None:
+                    amostras_cad.append(cad[idx])
             time.sleep(0.01)
+
+        if MODO_ALTURA == "pipeline":
+            # Ganho próprio de cada método; o ganho global fica em 1
+            for metodo, amo in (("osc", amostras_osc), ("cadeia", amostras_cad)):
+                med = float(np.median(amo)) if amo else 0.0
+                g = max(0.4, min(2.5, ALTURA_CAIXA_CM / med)) if med >= 2.0 else 1.0
+                atual = list(ganhos_metodo[metodo])
+                atual[idx] = g
+                ganhos_metodo[metodo] = tuple(atual)
+                print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm -> ganho {g:.3f}")
+            resultados[idx] = 1.0
+            print("    Volte o pé para o chão.")
+            time.sleep(2.0)
+            continue
 
         medido = float(np.median(amostras)) if amostras else 0.0
         if medido < 2.0:
@@ -1186,6 +1611,26 @@ def calibrar_ganho_caixa():
     print("=" * 90)
 
 
+def calibrar_cadeia(amostras_pos, amostras_quat):
+    """Monta a cadeia das pernas com as orientações e posições do período parado."""
+    if MODO_ALTURA == "osc":
+        return None
+    faltando = [seg for seg, qs in amostras_quat.items() if len(qs) < 10]
+    if faltando:
+        print(f"  [Aviso] Sem orientação SolarXR de {', '.join(faltando)}: altura só pelo OSC.")
+        return None
+    comp = None
+    if all(len(v) >= 10 for v in amostras_pos.values()):
+        med = {k: np.median(np.array(v), axis=0) for k, v in amostras_pos.items()}
+        comp = cadeia_pernas.comprimentos_de_osc(med["quad"], med["joelho_e"], med["joelho_d"], med["pe_e"], med["pe_d"])
+    nova = cadeia_pernas.CadeiaPernas(comp)
+    nova.calibrar(amostras_quat)
+    c = nova.comprimentos
+    print(f"      • Cadeia pernas  : coxa E {c['LEFT_UPPER_LEG']*100:4.1f} / canela E {c['LEFT_LOWER_LEG']*100:4.1f} | "
+          f"coxa D {c['RIGHT_UPPER_LEG']*100:4.1f} / canela D {c['RIGHT_LOWER_LEG']*100:4.1f} cm (modo: {MODO_ALTURA})")
+    return nova
+
+
 def executar_calibracao_inicial():
     """
     Executa a calibração estática inicial com os dois pés apoiados no chão.
@@ -1195,7 +1640,7 @@ def executar_calibracao_inicial():
     global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
     global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
     global L_coxa_pe_e_ref, L_coxa_pe_d_ref, yq_ref
-    global tempo_inicial
+    global tempo_inicial, cadeia, pitch_tronco_ref
 
     print("\n" + "=" * 90)
     print("   🎯 ETAPA 1: CALIBRAÇÃO ESTÁTICA DOS PÉS E CHÃO (NIVELAMENTO EM 0.0 CM)")
@@ -1248,6 +1693,8 @@ def executar_calibracao_inicial():
     amostras_dd = []
     amostras_lce = []
     amostras_lcd = []
+    amostras_pos = {"quad": [], "pe_e": [], "pe_d": [], "joelho_e": [], "joelho_d": []}
+    amostras_quat = {seg: [] for seg in cadeia_pernas.SEGMENTOS}
 
     t_fim = time.time() + TEMPO_CALIB_ESTATICA_S
     while time.time() < t_fim and rodando:
@@ -1257,6 +1704,7 @@ def executar_calibracao_inicial():
             pq = pos_atual[TRACKER_QUADRIL]
             pce = pos_atual.get(TRACKER_COXA_ESQ)
             pcd = pos_atual.get(TRACKER_COXA_DIR)
+            qs = dict(quat_atual)
         if pe is not None and pd is not None and pq is not None:
             amostras_ye.append(pe[1])
             amostras_yd.append(pd[1])
@@ -1266,6 +1714,14 @@ def executar_calibracao_inicial():
             if pce is not None and pcd is not None:
                 amostras_lce.append(pce[1] - pe[1])
                 amostras_lcd.append(pcd[1] - pd[1])
+                amostras_pos["quad"].append(pq)
+                amostras_pos["pe_e"].append(pe)
+                amostras_pos["pe_d"].append(pd)
+                amostras_pos["joelho_e"].append(pce)
+                amostras_pos["joelho_d"].append(pcd)
+            for seg, q in qs.items():
+                if q is not None:
+                    amostras_quat[seg].append(q)
         time.sleep(0.01)
 
     if len(amostras_de) >= 20 and len(amostras_dd) >= 20:
@@ -1286,6 +1742,13 @@ def executar_calibracao_inicial():
         limiar_ruido_chao = max(1.0, 3.0 * max(sigma_e, sigma_d))
 
         calibrado = True
+        cadeia = calibrar_cadeia(amostras_pos, amostras_quat)
+        # Postura natural do tronco: o pipeline mede a inclinação a partir dela
+        tp, pp = dados[TRACKER_PEITO]["t"], dados[TRACKER_PEITO]["pitch"]
+        if len(tp) >= 10:
+            tp, pp = np.array(tp), np.array(pp)
+            pitch_tronco_ref = float(np.median(pp[tp >= tp[-1] - 3.0]))
+            print(f"      • Tronco natural : {pitch_tronco_ref:+.1f}° (referência da inclinação)")
         print("=" * 90)
         print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
         print(f"      • Ref. Solo E    : {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
@@ -1306,11 +1769,166 @@ def executar_calibracao_inicial():
             dados[t_id] = {k: [] for k in dados[t_id]}
         for l in dados_imu:
             dados_imu[l] = {k: [] for k in dados_imu[l]}
+        for seg in dados_quat:
+            dados_quat[seg] = {"t": [], "q": []}
         tempo_inicial = time.time()
 
 
+def _aviso_sonoro(vezes=1):
+    """Bipe na troca de etapa. No Windows tenta o som do sistema e o Beep; nos outros, o sino do terminal."""
+    try:
+        import winsound
+        try:
+            winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
+        except Exception:
+            pass
+        for _ in range(vezes):
+            winsound.Beep(1000, 200)
+    except Exception:
+        print("\a" * vezes, end="", flush=True)
+
+
+def executar_roteiro():
+    """Conduz as etapas do ROTEIRO com tempo fixo e guarda o início e o fim de cada uma."""
+    global etapa_atual, roteiro_terminou
+    total = sum(seg for _, seg, _ in ROTEIRO)
+    print(f"\n   📋 Roteiro guiado: {len(ROTEIRO)} etapas, {total:.0f} s no total.\n")
+    for i, (nome, segundos, instrucao) in enumerate(ROTEIRO):
+        if not rodando:
+            return
+        proxima = ROTEIRO[i + 1][2] if i + 1 < len(ROTEIRO) else "fim da gravação"
+        print(f"\n\n   ▶ [{i + 1}/{len(ROTEIRO)}] {instrucao}  ({segundos:.0f} s)")
+        print(f"     depois: {proxima}\n")
+        _aviso_sonoro(2 if nome.startswith(("caminhada", "caixa", "inclinar")) else 1)
+        t0 = time.time() - tempo_inicial
+        fim = time.time() + segundos
+        while rodando and time.time() < fim:
+            falta = fim - time.time()
+            if falta <= 3.0 and i + 1 < len(ROTEIRO):
+                etapa_atual = f"{nome} {falta:4.1f}s >> PRÓXIMA: {ROTEIRO[i + 1][0]} em {int(falta) + 1}"
+            else:
+                etapa_atual = f"{nome} {falta:4.1f}s"
+            time.sleep(0.05)
+        fases_sessao.append((nome, t0, time.time() - tempo_inicial))
+    etapa_atual = ""
+    _aviso_sonoro(3)
+    print("\n\n   ✅ Roteiro concluído. Encerrando a gravação...")
+    roteiro_terminou = True
+
+
+def salvar_fases():
+    if not fases_sessao:
+        return
+    try:
+        with open(NOME_ARQUIVO_FASES, mode="w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["etapa", "t0", "t1"])
+            for nome, t0, t1 in fases_sessao:
+                w.writerow([nome, f"{t0:.3f}", f"{t1:.3f}"])
+        print(f"Etapas do roteiro salvas em {NOME_ARQUIVO_FASES}")
+    except Exception as e:
+        print(f"Não foi possível salvar as etapas: {e}")
+
+
+def comparar_com_marcas(tempos, pes, comprimentos):
+    """Compara o comprimento de cada passo das caminhadas com as marcas do chão.
+
+    Retorna {índice do passo: comprimento real em m} dos passos que casaram."""
+    reais = {}
+    for nome, t0, t1 in fases_sessao:
+        if not nome.startswith("caminhada"):
+            continue
+        m = (np.asarray(tempos) >= t0) & (np.asarray(tempos) <= t1 + 1.0)
+        indices = np.flatnonzero(m)
+        casados = marcas_chao.casar_com_marcas(np.asarray(pes)[m], np.asarray(comprimentos)[m], np.asarray(tempos)[m])
+        for c in casados:
+            k = int(indices[np.argmin(np.abs(np.asarray(tempos)[m] - c["t"]))])
+            reais[k] = c["real_m"]
+        print(f"\n  📏 Comprimento do passo x marcas no chão ({nome}):")
+        print(marcas_chao.resumo_texto(casados))
+    return reais
+
+
+def definir_pasta_saida(pasta):
+    """Faz todos os arquivos da coleta irem para a pasta do participante."""
+    global PASTA_COLETA, NOME_ARQUIVO_PASSOS, NOME_ARQUIVO_BRUTO, NOME_ARQUIVO_ENTRADA
+    global NOME_ARQUIVO_FASES, NOME_ARQUIVO_RELATORIO
+    PASTA_COLETA = pasta
+    NOME_ARQUIVO_PASSOS = os.path.join(pasta, "resultado_completo_marcha.csv")
+    NOME_ARQUIVO_BRUTO = os.path.join(pasta, "dados_brutos_sessao.csv")
+    NOME_ARQUIVO_ENTRADA = os.path.join(pasta, "dados_brutos_entrada.json")
+    NOME_ARQUIVO_FASES = os.path.join(pasta, "fases_sessao.csv")
+    NOME_ARQUIVO_RELATORIO = os.path.join(pasta, "relatorio.txt")
+
+
+class _Tee:
+    """Escreve no terminal e num arquivo ao mesmo tempo (para guardar o relatório)."""
+    def __init__(self, arq, terminal):
+        self.arq, self.terminal = arq, terminal
+
+    def write(self, s):
+        self.terminal.write(s)
+        try:
+            self.arq.write(s)
+        except Exception:
+            pass
+
+    def flush(self):
+        self.terminal.flush()
+        self.arq.flush()
+
+
+def salvar_dados_brutos():
+    """Salva a altura de cada pé ao longo do tempo (CSV) e as entradas brutas (JSON)."""
+    import json
+    try:
+        colunas = ["t", "altura_esq_cm", "altura_dir_cm", "osc_esq_cm", "osc_dir_cm",
+                   "cadeia_esq_cm", "cadeia_dir_cm", "tronco_graus", "peso_cadeia"]
+        n = len(serie_altura.get("t", []))
+        with open(NOME_ARQUIVO_BRUTO, mode="w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(colunas)
+            for i in range(n):
+                linha = []
+                for c in colunas:
+                    v = serie_altura.get(c)
+                    linha.append("" if v is None else f"{float(v[i]):.4f}")
+                w.writerow(linha)
+        entrada = {
+            "participante": PARTICIPANTE,
+            "modo_altura": MODO_ALTURA,
+            "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
+            "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
+            "fases": [list(f) for f in fases_sessao],
+            "ganhos_cadeia_caixa": list(ganhos_cadeia_caixa),
+            "calibracao": {
+                "dist_qp_e_ref": dist_qp_e_ref, "dist_qp_d_ref": dist_qp_d_ref, "yq_ref": yq_ref,
+                "chao_esq_ref": chao_esq_ref, "chao_dir_ref": chao_dir_ref,
+                "limiar_ruido_chao": limiar_ruido_chao, "pitch_tronco_ref": pitch_tronco_ref,
+                "cadeia_comprimentos": cadeia.comprimentos if cadeia is not None else None,
+                "cadeia_vetor_local": ({k: list(map(float, v)) for k, v in cadeia.vetor_local.items()}
+                                       if cadeia is not None else None),
+            },
+            "trackers": {tid: {k: list(map(float, v)) for k, v in d.items()} for tid, d in dados.items()},
+            "imu": {lado: {k: list(map(float, v)) for k, v in d.items()} for lado, d in dados_imu.items()},
+            "quats": {seg: {"t": list(map(float, d["t"])), "q": [list(map(float, q)) for q in d["q"]]}
+                      for seg, d in dados_quat.items()},
+        }
+        with open(NOME_ARQUIVO_ENTRADA, "w", encoding="utf-8") as f:
+            json.dump(entrada, f)
+        print(f"Série completa salva em {NOME_ARQUIVO_BRUTO} e entradas em {NOME_ARQUIVO_ENTRADA}")
+    except Exception as e:
+        print(f"Não foi possível salvar os dados brutos: {e}")
+
+
 def main():
-    global rodando
+    global rodando, PARTICIPANTE
+    # 0. Cadastro do participante e pasta da coleta
+    if PEDIR_PARTICIPANTE:
+        PARTICIPANTE = cadastro.pedir_participante()
+        pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)
+        definir_pasta_saida(pasta)
+        print(f"   Os arquivos desta coleta vão para {pasta}\n")
     # 1. Servidores OSC (Porta 9000) e VMC (Porta 39539)
     t_osc = threading.Thread(target=rodar_servidor, args=(PORTA_OSC, osc_handler_9000), daemon=True)
     t_vmc = threading.Thread(target=rodar_servidor, args=(PORTA_VMC, vmc_handler_39539), daemon=True)
@@ -1347,16 +1965,24 @@ def main():
     executar_calibracao_inicial()
 
     print("\n" + "=" * 90)
-    print("   🚀 GRAVAÇÃO INICIADA! Pode caminhar normalmente.")
+    if ROTEIRO_GUIADO:
+        print("   🚀 GRAVAÇÃO INICIADA! Siga as etapas que vão aparecer na tela.")
+    else:
+        print("   🚀 GRAVAÇÃO INICIADA! Pode caminhar normalmente.")
     print("   Pressione 'Ctrl + C' a qualquer momento para finalizar e abrir os relatórios e gráficos.")
     print("=" * 90 + "\n")
 
+    if ROTEIRO_GUIADO:
+        threading.Thread(target=executar_roteiro, daemon=True).start()
+
     try:
-        while True:
+        while not roteiro_terminou:
             mostrar_feedback()
             time.sleep(0.005)
+        raise KeyboardInterrupt
     except KeyboardInterrupt:
-        rodando = False
+        with lock:
+            rodando = False  # a partir daqui as threads de captura não acrescentam mais nada
         print("\n\n[*] Captura concluída! Sincronizando sinais biométricos e calculando métricas...", flush=True)
 
         if proc_node:
@@ -1365,40 +1991,69 @@ def main():
             except Exception:
                 pass
 
-        d_esq = dados[TORNOZELO_ESQ]
-        d_dir = dados[TORNOZELO_DIR]
-        d_quad = dados[TRACKER_QUADRIL]
-        d_coxa_e = dados[TRACKER_COXA_ESQ]
-        d_coxa_d = dados[TRACKER_COXA_DIR]
+        processar_coleta()
 
-        if len(d_esq["t"]) < 20 or len(d_dir["t"]) < 20:
-            print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
-            return
 
-        t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
-            d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
+def processar_coleta():
+    """Calcula os passos, salva os arquivos e gera o relatório e os gráficos da coleta."""
+    d_esq = dados[TORNOZELO_ESQ]
+    d_dir = dados[TORNOZELO_DIR]
+    d_quad = dados[TRACKER_QUADRIL]
+    d_coxa_e = dados[TRACKER_COXA_ESQ]
+    d_coxa_d = dados[TRACKER_COXA_DIR]
+
+    if len(d_esq["t"]) < 20 or len(d_dir["t"]) < 20:
+        print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
+        return
+
+    t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
+        d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
+    )
+
+    salvar_fases()
+    salvar_dados_brutos()
+
+    tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
+        t_passo, d_passo_ap, taxa
+    )
+    if COMPRIMENTO_PELO_PLATO and len(tempos_impactos) > 0:
+        tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = comprimento_pelo_plato(
+            t_passo, d_passo_ap, tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap
         )
 
-        tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = detectar_passos_multimodal(
-            t_passo, d_passo_ap, taxa
-        )
+    if len(dist_impactos) == 0:
+        print("Nenhum passo com a amplitude configurada foi detectado.")
+        return
 
-        if len(dist_impactos) == 0:
-            print("Nenhum passo com a amplitude configurada foi detectado.")
-            return
+    clearances_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, clear_esq_cm, clear_dir_cm)
+    tornozelos_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, torn_esq_cm, torn_dir_cm)
+    mascara_validos = remover_outliers(dist_impactos)
 
-        clearances_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, clear_esq_cm, clear_dir_cm)
-        tornozelos_passos_cm = calcular_alturas_passos(t_passo, tempos_impactos, pes_passos, torn_esq_cm, torn_dir_cm)
-        mascara_validos = remover_outliers(dist_impactos)
+    terminal = sys.stdout
+    with open(NOME_ARQUIVO_RELATORIO, "w", encoding="utf-8") as frel:
+        sys.stdout = _Tee(frel, terminal)
+        try:
+            reais = {}
+            try:
+                reais = comparar_com_marcas(tempos_impactos, pes_passos, dist_impactos)
+            except Exception as e:
+                print(f"Não foi possível comparar com as marcas: {e}")
+            gerar_relatorio_e_graficos(
+                t_passo, d_passo_ap, larg_base_m,
+                clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm,
+                alt_quadril_cm, posturas,
+                tempos_impactos, dist_impactos, impactos_ms2,
+                clearances_passos_cm, tornozelos_passos_cm,
+                pes_passos, projecoes_ap, mascara_validos, reais_m=reais
+            )
+        finally:
+            sys.stdout = terminal
+    print(f"Relatório salvo em {NOME_ARQUIVO_RELATORIO}")
+    print(f"\n📁 Todos os arquivos desta coleta estão em {PASTA_COLETA}")
 
-        gerar_relatorio_e_graficos(
-            t_passo, d_passo_ap, larg_base_m,
-            clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm,
-            alt_quadril_cm, posturas,
-            tempos_impactos, dist_impactos, impactos_ms2,
-            clearances_passos_cm, tornozelos_passos_cm,
-            pes_passos, projecoes_ap, mascara_validos
-        )
+    if MOSTRAR_GRAFICOS:
+        import matplotlib.pyplot as plt
+        plt.show()
 
 
 if __name__ == "__main__":

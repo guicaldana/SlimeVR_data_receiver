@@ -14,6 +14,8 @@ function decodeEvent(event) {
   return decodeDataFeedUpdates(buffer);
 }
 
+const SEGMENTOS_PERNA = new Set(['LEFT_UPPER_LEG', 'LEFT_LOWER_LEG', 'RIGHT_UPPER_LEG', 'RIGHT_LOWER_LEG']);
+
 async function run() {
   const socket = new WebSocket('ws://127.0.0.1:21110');
   socket.binaryType = 'arraybuffer';
@@ -30,6 +32,14 @@ async function run() {
     for (const update of decodeEvent(event)) {
       for (const rec of flattenUpdate(update, received, 0)) {
         const bp = rec.bodyPartName || '';
+
+        // Orientação das coxas e canelas para a cadeia de transformações das pernas
+        // Formato: Q <SEGMENTO> <QX> <QY> <QZ> <QW> <UNIX_MS>
+        if (SEGMENTOS_PERNA.has(bp)) {
+          const q = rec.rotation;
+          if (q) process.stdout.write(`Q ${bp} ${q.x.toFixed(6)} ${q.y.toFixed(6)} ${q.z.toFixed(6)} ${q.w.toFixed(6)} ${received.unixMs}\n`);
+          continue;
+        }
         if (bp !== 'LEFT_FOOT' && bp !== 'RIGHT_FOOT') continue;
 
         const lado = bp === 'LEFT_FOOT' ? 'ESQ' : 'DIR';
