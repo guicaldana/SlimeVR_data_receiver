@@ -15,6 +15,10 @@ const {
   MessageBundle,
   MessageBundleT,
   PollDataFeedT,
+  RpcMessage,
+  RpcMessageHeaderT,
+  SkeletonBone,
+  SkeletonConfigRequestT,
   StartDataFeedT,
   TrackerDataMaskT,
 } = solarxr;
@@ -115,4 +119,31 @@ export function flattenUpdate(update, received, frameSequence) {
     }
   }
   return records;
+}
+
+// Pedido RPC das proporções do corpo e da altura configuradas no SlimeVR
+export function encodeSkeletonConfigRequest() {
+  const header = new RpcMessageHeaderT();
+  header.messageType = RpcMessage.SkeletonConfigRequest;
+  header.message = new SkeletonConfigRequestT();
+  const bundle = new MessageBundleT();
+  bundle.rpcMsgs = [header];
+  const builder = new Builder(256);
+  builder.finish(bundle.pack(builder));
+  return builder.asUint8Array();
+}
+
+// Resposta do SlimeVR: { userHeight (m), parts: { UPPER_LEG: m, ... } }, ou null se a mensagem não for essa
+export function decodeSkeletonConfig(bytes) {
+  const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const bundle = MessageBundle.getRootAsMessageBundle(new ByteBuffer(raw)).unpack();
+  for (const header of bundle.rpcMsgs ?? []) {
+    if (header.messageType !== RpcMessage.SkeletonConfigResponse || !header.message) continue;
+    const parts = {};
+    for (const part of header.message.skeletonParts ?? []) {
+      parts[SkeletonBone[part.bone] ?? String(part.bone)] = part.value;
+    }
+    return { userHeight: header.message.userHeight, parts };
+  }
+  return null;
 }

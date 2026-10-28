@@ -139,7 +139,7 @@ No fim, o script mostra uma tabela por inclinação e por pé. Ela traz quanto o
 
 ### `piloto.py` — Coleta do piloto (três circuitos e três alturas conhecidas numa coleta só)
 Usa os mesmos cálculos do `calculo_passo.py`, com o protocolo do piloto (~4 min de roteiro por rodada, além da calibração e da preparação):
-1. Nome e altura do participante, a rodada (1 = familiarização, 2 = coleta) e as alturas dos três objetos de teste (as três são digitadas; serão entre 15 e 25 cm, valores ainda a definir; fora dessa faixa o programa pede confirmação).
+1. Nome e altura do participante (o programa lê pelo SolarXR a altura e as proporções configuradas no SlimeVR e sugere essa altura, que o Enter aceita; se a altura digitada diferir em mais de 3 cm, avisa para ajustar o SlimeVR antes de coletar; `LER_ALTURA_SLIMEVR`), a rodada (1 = familiarização, 2 = coleta) e as alturas dos três objetos de teste (as três são digitadas; serão entre 15 e 25 cm, valores ainda a definir; fora dessa faixa o programa pede confirmação).
 2. Calibração com a caixa de 7 cm.
 3. Uma caminhada com o tronco reto em cada circuito A, B e C (uma cor de fita para cada). Na rodada de coleta, a ordem dos circuitos é sorteada para cada participante (`SORTEAR_ORDEM_CIRCUITOS`); na familiarização, a ordem é fixa (A, B, C), aparece no terminal e fica salva em `participante.json` e `dados_brutos_entrada.json` (`ordem_circuitos`). Tempo de caminhada: 25 s em cada circuito (`TEMPO_CAMINHADA_S`).
 4. Pé E e pé D sobre cada objeto com o tronco reto.

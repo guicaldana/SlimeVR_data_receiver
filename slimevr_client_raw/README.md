@@ -94,3 +94,11 @@ pnpm test
 ```
 
 O teste de integração abre temporariamente uma porta local para simular o servidor. Nenhum firmware é alterado por este cliente.
+
+## Altura e proporções configuradas no SlimeVR
+
+```bash
+node src/cli.mjs esqueleto
+```
+
+Pede ao SlimeVR Server (RPC `SkeletonConfigRequest` do SolarXR) a altura do usuário e as proporções do corpo e mostra em JSON, em metros (`userHeight` e `parts`, por exemplo `UPPER_LEG` e `LOWER_LEG`). O SlimeVR não mede a altura: sem óculos de VR, ela é a informada nas configurações dele. O cadastro dos programas de coleta usa este comando para sugerir a altura do participante.

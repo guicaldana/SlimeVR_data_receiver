@@ -9,12 +9,16 @@ dados/participantes/<Nome>/participante.json guarda o cadastro e a lista de cole
 import json
 import os
 import re
+import subprocess
 import time
 import unicodedata
 
 PASTA_PARTICIPANTES = os.path.join("dados", "participantes")
 ALTURA_MIN_CM = 100.0
 ALTURA_MAX_CM = 230.0
+# Diferença (cm) entre a altura digitada e a configurada no SlimeVR que gera aviso
+DIVERGENCIA_ALTURA_SLIMEVR_CM = 3.0
+CLIENTE_SOLARXR = os.path.join("slimevr_client_raw", "src", "cli.mjs")
 
 
 def nome_para_pasta(nome):
@@ -38,8 +42,44 @@ def ler_altura_cm(texto):
     return round(v, 1)
 
 
-def pedir_participante(entrada=input):
-    """Pergunta nome e altura no terminal até receber valores válidos."""
+def ler_esqueleto_slimevr(tempo_max_s=15.0, executar=subprocess.run):
+    """Altura e proporções do corpo configuradas no SlimeVR Server (via SolarXR), ou None.
+
+    Devolve {"altura_cm": ..., "proporcoes_cm": {"UPPER_LEG": ..., ...}}. O SlimeVR não mede a
+    altura: sem óculos de VR, ela é a que foi informada nas configurações dele.
+    """
+    if not os.path.exists(CLIENTE_SOLARXR):
+        return None
+    try:
+        r = executar(["node", CLIENTE_SOLARXR, "esqueleto"], capture_output=True, text=True,
+                     timeout=tempo_max_s)
+        linha = [l for l in r.stdout.splitlines() if l.strip().startswith("{")]
+        if r.returncode != 0 or not linha:
+            return None
+        dados = json.loads(linha[-1])
+    except Exception:
+        return None
+    altura = float(dados.get("userHeight") or 0.0) * 100.0
+    partes = {k: round(float(v) * 100.0, 1) for k, v in (dados.get("parts") or {}).items()}
+    if not (ALTURA_MIN_CM <= altura <= ALTURA_MAX_CM):
+        return None
+    return {"altura_cm": round(altura, 1), "proporcoes_cm": partes}
+
+
+def _mostrar_esqueleto(esq):
+    p = esq["proporcoes_cm"]
+    txt = ", ".join(f"{rot} {p[k]:.1f}" for k, rot in (("UPPER_LEG", "coxa"), ("LOWER_LEG", "canela"),
+                                                      ("HIP", "quadril"), ("WAIST", "cintura"),
+                                                      ("CHEST", "peito"), ("NECK", "pescoço")) if k in p)
+    print(f"   SlimeVR: altura configurada {esq['altura_cm']:.1f} cm" + (f" | {txt} cm" if txt else ""))
+
+
+def pedir_participante(entrada=input, esqueleto=None):
+    """Pergunta nome e altura no terminal até receber valores válidos.
+
+    Com esqueleto (de ler_esqueleto_slimevr), Enter aceita a altura configurada no SlimeVR e o
+    programa avisa se a altura digitada for diferente dela.
+    """
     print("-" * 75)
     print("   CADASTRO DO PARTICIPANTE")
     print("-" * 75)
@@ -48,13 +88,27 @@ def pedir_participante(entrada=input):
         if nome:
             break
         print("   O nome não pode ficar vazio.")
+    padrao = esqueleto["altura_cm"] if esqueleto else None
+    if esqueleto:
+        _mostrar_esqueleto(esqueleto)
     while True:
-        altura = ler_altura_cm(entrada("   Altura (cm, por exemplo 172): "))
+        dica = f"Enter = {padrao:.1f} do SlimeVR" if padrao else "cm, por exemplo 172"
+        texto = entrada(f"   Altura ({dica}): ")
+        if padrao and not texto.strip():
+            altura, fonte = padrao, "SlimeVR"
+            break
+        altura, fonte = ler_altura_cm(texto), "digitada"
         if altura is not None:
             break
         print(f"   Altura inválida. Digite um valor entre {ALTURA_MIN_CM:.0f} e {ALTURA_MAX_CM:.0f} cm.")
-    print(f"\n   Participante: {nome} | altura {altura:.1f} cm\n")
-    return {"nome": nome, "altura_cm": altura}
+    if padrao and abs(altura - padrao) > DIVERGENCIA_ALTURA_SLIMEVR_CM:
+        print(f"   [Aviso] A altura do SlimeVR ({padrao:.1f} cm) é diferente de {altura:.1f} cm.")
+        print("           Ajuste a altura e as proporções no SlimeVR e refaça o reset antes de coletar.")
+    print(f"\n   Participante: {nome} | altura {altura:.1f} cm ({fonte})\n")
+    cad = {"nome": nome, "altura_cm": altura, "altura_fonte": fonte}
+    if esqueleto:
+        cad["slimevr"] = esqueleto
+    return cad
 
 
 def pedir_circuito(circuitos, descricao, entrada=input):

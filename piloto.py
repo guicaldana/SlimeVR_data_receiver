@@ -210,6 +210,7 @@ NOME_ARQUIVO_RELATORIO = os.path.join("dados", "relatorio.txt")
 # Antes do experimento o programa pede nome e altura do participante e grava tudo
 # em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/ (ver participante.py).
 PEDIR_PARTICIPANTE = True
+LER_ALTURA_SLIMEVR = True     # no cadastro, sugere a altura configurada no SlimeVR (Enter aceita)
 # Comprimento do passo: máximo da distância anteroposterior entre os pés em cada
 # platô (o pé da frente fica à frente até o outro passar). O contato do calcanhar
 # (aceleração) só marca o tempo do passo. False volta ao valor no instante do contato.
@@ -2266,7 +2267,10 @@ def main():
     global rodando, PARTICIPANTE
     # 0. Cadastro do participante e pasta da coleta
     if PEDIR_PARTICIPANTE:
-        PARTICIPANTE = cadastro.pedir_participante()
+        esqueleto = cadastro.ler_esqueleto_slimevr() if LER_ALTURA_SLIMEVR else None
+        if LER_ALTURA_SLIMEVR and esqueleto is None:
+            print("   [Aviso] Não consegui ler a altura do SlimeVR (o servidor está aberto?). Digite a altura.")
+        PARTICIPANTE = cadastro.pedir_participante(esqueleto=esqueleto)
         PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
         # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
         anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
