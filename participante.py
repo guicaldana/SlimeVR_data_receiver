@@ -19,6 +19,9 @@ ALTURA_MAX_CM = 230.0
 # Diferença (cm) entre a altura digitada e a configurada no SlimeVR que gera aviso
 DIVERGENCIA_ALTURA_SLIMEVR_CM = 3.0
 CLIENTE_SOLARXR = os.path.join("slimevr_client_raw", "src", "cli.mjs")
+# O SlimeVR guarda a altura dos olhos (soma das proporções do pescoço às pernas); a altura total
+# mostrada na tela dele é essa altura dividida por 0,936 (28/10: 157,25 cm -> 168,0 cm)
+RAZAO_OLHOS_ALTURA_SLIMEVR = 0.936
 
 
 def nome_para_pasta(nome):
@@ -45,7 +48,7 @@ def ler_altura_cm(texto):
 def ler_esqueleto_slimevr(tempo_max_s=15.0, executar=subprocess.run):
     """Altura e proporções do corpo configuradas no SlimeVR Server (via SolarXR), ou None.
 
-    Devolve {"altura_cm": ..., "proporcoes_cm": {"UPPER_LEG": ..., ...}}. O SlimeVR não mede a
+    Devolve {"altura_cm": ..., "altura_olhos_cm": ..., "proporcoes_cm": {"UPPER_LEG": ..., ...}}. O SlimeVR não mede a
     altura: sem óculos de VR, ela é a que foi informada nas configurações dele.
     """
     if not os.path.exists(CLIENTE_SOLARXR):
@@ -59,11 +62,12 @@ def ler_esqueleto_slimevr(tempo_max_s=15.0, executar=subprocess.run):
         dados = json.loads(linha[-1])
     except Exception:
         return None
-    altura = float(dados.get("userHeight") or 0.0) * 100.0
+    olhos = float(dados.get("userHeight") or 0.0) * 100.0
+    altura = olhos / RAZAO_OLHOS_ALTURA_SLIMEVR
     partes = {k: round(float(v) * 100.0, 1) for k, v in (dados.get("parts") or {}).items()}
     if not (ALTURA_MIN_CM <= altura <= ALTURA_MAX_CM):
         return None
-    return {"altura_cm": round(altura, 1), "proporcoes_cm": partes}
+    return {"altura_cm": round(altura, 1), "altura_olhos_cm": round(olhos, 1), "proporcoes_cm": partes}
 
 
 def _mostrar_esqueleto(esq):

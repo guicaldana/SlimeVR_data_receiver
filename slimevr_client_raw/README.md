@@ -101,4 +101,4 @@ O teste de integração abre temporariamente uma porta local para simular o serv
 node src/cli.mjs esqueleto
 ```
 
-Pede ao SlimeVR Server (RPC `SkeletonConfigRequest` do SolarXR) a altura do usuário e as proporções do corpo e mostra em JSON, em metros (`userHeight` e `parts`, por exemplo `UPPER_LEG` e `LOWER_LEG`). O SlimeVR não mede a altura: sem óculos de VR, ela é a informada nas configurações dele. O cadastro dos programas de coleta usa este comando para sugerir a altura do participante.
+Pede ao SlimeVR Server (RPC `SkeletonConfigRequest` do SolarXR) a altura do usuário e as proporções do corpo e mostra em JSON, em metros (`userHeight` e `parts`, por exemplo `UPPER_LEG` e `LOWER_LEG`). O `userHeight` é a altura dos olhos (a soma das proporções do pescoço às pernas); a altura total mostrada no SlimeVR é `userHeight / 0,936` (em 28/10: 1,5725 m → 168 cm). O SlimeVR não mede a altura: sem óculos de VR, ela é a informada nas configurações dele. O cadastro dos programas de coleta usa este comando para sugerir a altura do participante.
