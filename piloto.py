@@ -1674,24 +1674,47 @@ def _clearance_osc_cm(p_esq, p_dir, p_quad):
     return max(0.0, (h_e - piso) * 100.0), max(0.0, (h_d - piso) * 100.0)
 
 
-def _contagem(texto, segundos):
-    """Mostra uma contagem regressiva de segundos inteiros na mesma linha."""
-    for cont in range(int(segundos), 0, -1):
-        print(f"    {texto} {cont}s...   ", end="\r", flush=True)
-        time.sleep(1.0)
-    print(" " * 60, end="\r")
+def _altura_agora_cm():
+    """Altura de cada pé (cm) neste instante, como na linha de feedback, ou None sem os pés."""
+    with lock:
+        pe = pos_atual[TORNOZELO_ESQ]
+        pd = pos_atual[TORNOZELO_DIR]
+        pq = pos_atual[TRACKER_QUADRIL]
+        qs = dict(quat_atual)
+    if pe is None or pd is None:
+        return None
+    e, d = _clearance_bruto_cm(pe, pd, pq, qs)
+    e, d = e * ganho_esq, d * ganho_dir
+    return (e if e >= limiar_ruido_chao else 0.0), (d if d >= limiar_ruido_chao else 0.0)
+
+
+def _texto_altura():
+    alt = _altura_agora_cm()
+    return " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
+
+
+def _contagem(texto, segundos, mostrar_altura=False):
+    """Contagem regressiva na mesma linha; com mostrar_altura, junto da altura dos pés em tempo real."""
+    fim = time.time() + int(segundos)
+    while rodando and time.time() < fim:
+        cont = int(math.ceil(fim - time.time()))
+        extra = _texto_altura() if mostrar_altura else ""
+        print(f"    {texto} {cont}s...{extra}   ", end="\r", flush=True)
+        time.sleep(INTERVALO_FEEDBACK if mostrar_altura else 0.2)
+    print(" " * 90, end="\r")
 
 
 def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     """Pede um pé sobre a caixa e devolve as medianas (pipeline, osc, cadeia) brutas."""
     print(f"\n👉 SUBA o pé {lado} n{'a' if objeto == 'caixa' else 'o'} {objeto} de {altura_cm:.1f} cm (o outro pé fica no chão).")
     _aviso_sonoro(1)
-    _contagem("Subindo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1))
+    _contagem("Subindo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
     print("    Pé em cima: fique PARADO.")
-    _contagem("Amostragem em", 2)
+    _contagem("Amostragem em", 2, mostrar_altura=True)
     print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
     amostras, amostras_osc, amostras_cad = [], [], []
     t_fim = time.time() + TEMPO_CAIXA_S
+    ultimo_print = 0.0
     while time.time() < t_fim and rodando:
         with lock:
             pe = pos_atual[TORNOZELO_ESQ]
@@ -1704,12 +1727,16 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
             cad = _clearance_cadeia_cm(qs)
             if cad is not None:
                 amostras_cad.append(cad[idx])
+        if time.time() - ultimo_print >= INTERVALO_FEEDBACK:
+            ultimo_print = time.time()
+            print(f"    Medindo {max(0.0, t_fim - ultimo_print):3.1f}s{_texto_altura()}   ", end="\r", flush=True)
         time.sleep(0.01)
+    print(" " * 90, end="\r")
     med = lambda a: float(np.median(a)) if a else 0.0
     print("    DESÇA o pé para o chão.")
     _aviso_sonoro(1)
-    _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1))
-    _contagem("Pé parado no chão:", 2)
+    _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
+    _contagem("Pé parado no chão:", 2, mostrar_altura=True)
     return med(amostras), med(amostras_osc), med(amostras_cad)
 
 

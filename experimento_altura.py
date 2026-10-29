@@ -11,7 +11,7 @@ Usa os mesmos cálculos e o mesmo cadastro do piloto.py:
      cada (tronco reto); o pé que fica no chão é a referência. Só o pé E: PES_ALTURA = ["ESQ"].
      Na rodada de coleta a ordem dos objetos é sorteada;
   4. antes do roteiro, um teste rápido da calibração (VERIFICAR_CALIBRACAO): cada pé sobe
-     no objeto de 7 cm por 3 s e, se o erro passar de 1 cm, o programa pede para refazer
+     no objeto de 7 cm (5 s para subir, 3 s medindo, altura em tempo real) e, se o erro passar de 1 cm, o programa pede para refazer
      o reset do SlimeVR e calibra de novo.
 Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_altura_<rodada>/, com
 altura_conhecida.csv, altura_objetos.png e relatorio.txt.
@@ -36,6 +36,8 @@ piloto.ALTURAS_CALIBRACAO_CM = [9.4, 14.5]
 piloto.VERIFICAR_CALIBRACAO = True
 piloto.ALTURA_VERIFICACAO_CM = 7.0
 piloto.TOLERANCIA_VERIFICACAO_CM = 1.0
+# Teste da calibração e caixa: 5 s para subir e para descer o pé (o padrão do piloto é 3 s)
+piloto.TEMPO_TRANSICAO_CALIB_S = 5
 piloto.ROTEIRO = piloto.montar_roteiro()
 
 if __name__ == "__main__":
