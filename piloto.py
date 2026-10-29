@@ -3,7 +3,7 @@ Piloto: coleta única por participante com os três circuitos de marcas e altura
 
 Baseado no calculo_passo.py (mesmos cálculos), com o protocolo do piloto:
   1. nome e altura do participante e as alturas dos objetos de teste;
-  2. calibração (caixa de 7 cm);
+  2. calibração estática (sem caixa: basta a calibração do SlimeVR);
   3. uma caminhada em cada circuito A, B e C (mesmo corredor), com o tronco reto,
      em ordem sorteada para cada participante;
   4. pé E e pé D sobre cada objeto de teste, com o tronco reto.
@@ -113,7 +113,7 @@ TRONCO_INCLINADO_GRAUS = 30.0  # a partir daqui só cadeia; entre os dois, trans
 CADEIA_ESCALA_NA_MARCHA = False  # 20/10: desligado (o ganho da caixa acertou a caixa reta e inclinada)
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
-CALIBRAR_CAIXA = True
+CALIBRAR_CAIXA = False   # 29/10: sem caixa; basta a calibração do SlimeVR
 ALTURA_CAIXA_CM = 7.0    # caixa de calibração (antes de 23/10 o valor usado era 6,7)
 # Alturas da calibração (cm). Com uma altura, o ganho é um fator só (ALTURA_CAIXA_CM).
 # Com duas ou mais, cada método e cada pé ganha uma curva que passa pelo chão (0, 0) e
@@ -137,8 +137,8 @@ LIMITE_TRONCO_TESTE_GRAUS = 5.0
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
 ROTEIRO_GUIADO = True
-# Três circuitos, cada um com um comprimento de passo fixo e 18 pegadas (marcas_chao.py).
-TEMPO_CAMINHADA_S = {"A": 25, "B": 25, "C": 25}
+# Três circuitos, cada um com um comprimento de passo fixo e 20 pegadas (marcas_chao.py).
+TEMPO_CAMINHADA_S = {"A": 30, "B": 30, "C": 30}   # 20 pegadas (até 10 m no circuito C)
 TEMPO_VOLTA_S = 20
 # Uma coleta só: os três circuitos ficam no mesmo corredor (uma cor de fita para cada).
 # Uma caminhada com o tronco reto em cada circuito.
@@ -150,7 +150,8 @@ ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 ALTURAS_TESTE_PADRAO_CM = [None, None, None]
 FAIXA_ALTURAS_TESTE_CM = (15.0, 25.0)   # fora dela o programa pede confirmação
 ALTURAS_TESTE_CM = []               # definidas no início da coleta
-# Experimento: "completo" (circuitos + objetos) ou "altura" (só objetos, ver experimento_altura.py)
+# Experimento: "completo" (circuitos + objetos), "comprimento" (só circuitos, ver experimento_comprimento.py)
+# ou "altura" (só objetos, ver experimento_altura.py)
 EXPERIMENTO = "completo"
 REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada pé em cada objeto
 SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
@@ -168,6 +169,8 @@ def montar_roteiro(alturas_cm=None):
             (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S[c],
              f"CIRCUITO {c}: CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés"),
         ]
+    if EXPERIMENTO == "comprimento":
+        return r
     alturas = list(alturas_cm or [ALTURA_CAIXA_CM])
     ordem = [j for j in ORDEM_OBJETOS if 1 <= j <= len(alturas)] or list(range(1, len(alturas) + 1))
     reps = REPETICOES_ALTURA if EXPERIMENTO == "altura" else 1
@@ -362,6 +365,7 @@ def aplicar_calibracao(valor, metodo, idx):
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
+ZONA_MORTA_MAX_CM = 1.5         # teto da zona morta: acima disso apagava alturas reais (29/10)
 delta_cal_esq = 0.0
 delta_cal_dir = 0.0
 chao_base_calibrado = None
@@ -2024,6 +2028,11 @@ def executar_calibracao_inicial():
         sigma_e = float(np.std(amostras_ye)) * 100.0
         sigma_d = float(np.std(amostras_yd)) * 100.0
         limiar_ruido_chao = max(1.0, 3.0 * max(sigma_e, sigma_d))
+        if limiar_ruido_chao > ZONA_MORTA_MAX_CM:
+            # Sem teto, um pé parado num objeto baixo (7 cm) virava 0 cm no resultado
+            print(f"\n   [Aviso] Pés tremeram na calibração (ruído {max(sigma_e, sigma_d):.1f} cm). "
+                  f"Zona morta limitada a {ZONA_MORTA_MAX_CM:.1f} cm. Se puder, repita com o participante bem parado.")
+            limiar_ruido_chao = ZONA_MORTA_MAX_CM
 
         calibrado = True
         cadeia = calibrar_cadeia(amostras_pos, amostras_quat)
@@ -2485,12 +2494,13 @@ def main():
         PARTICIPANTE = cadastro.pedir_participante(esqueleto=esqueleto)
         PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
         # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
-        anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
-        padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
-        print("   Alturas dos objetos de teste:")
-        PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
-                                          for h in padroes]
-        definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
+        if EXPERIMENTO != "comprimento":
+            anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
+            padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
+            print("   Alturas dos objetos de teste:")
+            PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
+                                              for h in padroes]
+            definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
         PARTICIPANTE["experimento"] = EXPERIMENTO
         if EXPERIMENTO == "altura":
             # Familiarização na ordem 1, 2, 3; na rodada de coleta a ordem dos objetos é sorteada
@@ -2638,7 +2648,8 @@ def processar_coleta():
             except Exception as e:
                 print(f"Não foi possível comparar com as marcas: {e}")
             try:
-                avaliar_altura_conhecida()
+                if EXPERIMENTO != "comprimento":
+                    avaliar_altura_conhecida()
             except Exception as e:
                 print(f"Não foi possível avaliar a altura conhecida: {e}")
             gerar_relatorio_e_graficos(
