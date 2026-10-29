@@ -161,6 +161,13 @@ Além dos arquivos do `calculo_passo.py`, a pasta da coleta traz `altura_conheci
 uv run python piloto.py
 ```
 
+### `experimento_comprimento.py` — Experimento só de comprimento de passada (sem objetos)
+Mesmo cadastro e rodadas (1 = familiarização, 2 = coleta) do `piloto.py`, mas o roteiro tem só as caminhadas nos três circuitos (30, 40 e 50 cm entre os calcanhares, `COMPRIMENTO_FIXO_CM` em `marcas_chao.py`), com o tronco reto. Não pede as alturas dos objetos e não tem calibração da caixa: basta a calibração do SlimeVR (reset completo e mounting) e a calibração estática do programa. Na rodada de coleta a ordem dos circuitos é sorteada. São 135 s de roteiro. A pasta termina em `_comprimento_familiarizacao` ou `_comprimento_coleta`.
+
+```powershell
+uv run python experimento_comprimento.py
+```
+
 ### `experimento_altura.py` — Experimento só de altura (sem caminhada)
 Mesmo cadastro e rodadas (1 = familiarização, 2 = coleta) do `piloto.py`. Por padrão não há calibração da caixa (`CALIBRAR_CAIXA = False`): nos Testes 4 e 5 de 26/10 o OSC bruto acertou os apoios do cone (7, 12 e 19 cm, medidos com régua) com erro de ~0,2 cm, e a calibração piorava para ~1,3 cm. Com `CALIBRAR_CAIXA = True`, a calibração usa a caixa em duas alturas (9,4 e 14,5 cm, medidas com régua; `ALTURAS_CALIBRACAO_CM`), diferentes das alturas do teste, com 3 s para subir e para descer o pé (`TEMPO_TRANSICAO_CALIB_S`) e 10 s para virar a caixa (`TEMPO_VIRAR_CAIXA_S`): cada pé e cada método (OSC e cadeia das pernas) ganha um fator de correção, a reta que passa pelo zero e melhor se ajusta às duas alturas medidas. Uma reta só resiste melhor a um ponto ruim que uma curva com quebra (no Teste 3 de 26/10, um ponto ruim na caixa mais alta fez a curva levar o objeto de 19 cm a 30 cm). Se as duas alturas da caixa discordarem em mais de 25% (`LIMITE_DIVERGENCIA_CALIB`), o programa avisa e pergunta se quer repetir a calibração. O relatório compara OSC e cadeia, cada um com a sua calibração; mas o roteiro tem só os objetos de teste (apoios do cone de 7, 12 e 19 cm, padrão no terminal): em cada objeto, os dois pés sobem alternados (E, depois D; o pé que fica no chão é a referência), `REPETICOES_ALTURA` vezes cada (padrão 3), com o tronco reto. Para usar só o pé E, troque `PES_ALTURA` para `["ESQ"]` em `experimento_altura.py`. Na rodada de coleta a ordem dos objetos é sorteada. São ~6,5 min de roteiro (387 s), com 3 s de transição (`TEMPO_TRANSICAO_S`) para subir e para descer o pé antes de cada etapa parada.
 

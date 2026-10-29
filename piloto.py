@@ -139,7 +139,8 @@ ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 ALTURAS_TESTE_PADRAO_CM = [None, None, None]
 FAIXA_ALTURAS_TESTE_CM = (15.0, 25.0)   # fora dela o programa pede confirmação
 ALTURAS_TESTE_CM = []               # definidas no início da coleta
-# Experimento: "completo" (circuitos + objetos) ou "altura" (só objetos, ver experimento_altura.py)
+# Experimento: "completo" (circuitos + objetos), "comprimento" (só circuitos, ver experimento_comprimento.py)
+# ou "altura" (só objetos, ver experimento_altura.py)
 EXPERIMENTO = "completo"
 REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada pé em cada objeto
 SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
@@ -157,6 +158,8 @@ def montar_roteiro(alturas_cm=None):
             (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S[c],
              f"CIRCUITO {c}: CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés"),
         ]
+    if EXPERIMENTO == "comprimento":
+        return r
     alturas = list(alturas_cm or [ALTURA_CAIXA_CM])
     ordem = [j for j in ORDEM_OBJETOS if 1 <= j <= len(alturas)] or list(range(1, len(alturas) + 1))
     reps = REPETICOES_ALTURA if EXPERIMENTO == "altura" else 1
@@ -2273,12 +2276,13 @@ def main():
         PARTICIPANTE = cadastro.pedir_participante(esqueleto=esqueleto)
         PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
         # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
-        anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
-        padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
-        print("   Alturas dos objetos de teste:")
-        PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
-                                          for h in padroes]
-        definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
+        if EXPERIMENTO != "comprimento":
+            anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
+            padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
+            print("   Alturas dos objetos de teste:")
+            PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
+                                              for h in padroes]
+            definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
         PARTICIPANTE["experimento"] = EXPERIMENTO
         if EXPERIMENTO == "altura":
             # Familiarização na ordem 1, 2, 3; na rodada de coleta a ordem dos objetos é sorteada
@@ -2424,7 +2428,8 @@ def processar_coleta():
             except Exception as e:
                 print(f"Não foi possível comparar com as marcas: {e}")
             try:
-                avaliar_altura_conhecida()
+                if EXPERIMENTO != "comprimento":
+                    avaliar_altura_conhecida()
             except Exception as e:
                 print(f"Não foi possível avaliar a altura conhecida: {e}")
             gerar_relatorio_e_graficos(
