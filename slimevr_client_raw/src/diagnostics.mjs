@@ -3,6 +3,7 @@ const FIELDS = [
   'device_id', 'tracker_num', 'tracker_device_id', 'body_part', 'body_part_name',
   'display_name', 'custom_name', 'imu_type', 'tracker_status', 'tracker_tps',
   'firmware_version', 'hardware_identifier', 'device_packet_loss',
+  'ping_ms', 'rssi_dbm', 'battery_pct', 'packets_lost', 'packets_received',
   'linear_acc_x_ms2', 'linear_acc_y_ms2', 'linear_acc_z_ms2',
   'rotation_x', 'rotation_y', 'rotation_z', 'rotation_w',
   'raw_acc_x_ms2', 'raw_acc_y_ms2', 'raw_acc_z_ms2',
@@ -28,6 +29,7 @@ export function recordToCsv(record) {
     record.bodyPart, record.bodyPartName, record.displayName, record.customName,
     record.imuType, record.trackerStatus, record.trackerTps, record.firmwareVersion,
     record.hardwareIdentifier, record.packetLoss,
+    record.pingMs, record.rssi, record.batteryPct, record.packetsLost, record.packetsReceived,
     a?.x, a?.y, a?.z,
     q?.x, q?.y, q?.z, q?.w,
     rawA?.x, rawA?.y, rawA?.z,
@@ -43,6 +45,43 @@ function quantile(sorted, fraction) {
   if (sorted.length === 0) return null;
   const index = Math.floor((sorted.length - 1) * fraction);
   return Math.round(sorted[index] * 1000) / 1000;
+}
+
+function resumo(values) {
+  if (values.length === 0) return null;
+  const sorted = values.toSorted((a, b) => a - b);
+  return {
+    median: quantile(sorted, 0.5),
+    p10: quantile(sorted, 0.1),
+    p90: quantile(sorted, 0.9),
+    maximum: sorted.at(-1),
+  };
+}
+
+// Tabela curta por tracker: TPS, ping, sinal e bateria (para o terminal)
+const NOMES_PT = {
+  LEFT_FOOT: 'Pé E', RIGHT_FOOT: 'Pé D', LEFT_LOWER_LEG: 'Canela E', RIGHT_LOWER_LEG: 'Canela D',
+  LEFT_UPPER_LEG: 'Coxa E', RIGHT_UPPER_LEG: 'Coxa D', HIP: 'Quadril', WAIST: 'Cintura',
+  CHEST: 'Peito', UPPER_CHEST: 'Peito sup.', HEAD: 'Cabeça',
+};
+
+export function nomeParte(bodyPartName) {
+  return NOMES_PT[bodyPartName] ?? bodyPartName ?? '?';
+}
+
+function cel(value, width, digits = 0) {
+  const text = value === null || value === undefined ? '-' : Number(value).toFixed(digits);
+  return text.padStart(width);
+}
+
+export function tabelaRede(linhas) {
+  // linhas: [{nome, tps, ping, rssi, bateria}] com números ou null
+  const out = [`  ${'Tracker'.padEnd(11)} ${'TPS'.padStart(5)} ${'Ping'.padStart(7)} ${'Sinal'.padStart(8)} ${'Bateria'.padStart(8)}`];
+  for (const l of linhas) {
+    const alerta = (l.tps !== null && l.tps < 50) || (l.ping !== null && l.ping > 50) ? '  <- ruim' : '';
+    out.push(`  ${l.nome.padEnd(11)} ${cel(l.tps, 5)} ${cel(l.ping, 4)} ms ${cel(l.rssi, 4)} dBm ${cel(l.bateria, 6)} %${alerta}`);
+  }
+  return out.join('\n');
 }
 
 export class Diagnostics {
@@ -78,6 +117,10 @@ export class Diagnostics {
         lastNs: null,
         previousAcceleration: null,
         previousRotation: null,
+        tps: [],
+        ping: [],
+        rssi: [],
+        battery: null,
       };
       this.trackers.set(id, state);
     }
@@ -111,6 +154,10 @@ export class Diagnostics {
       }
       state.previousRotation = record.rotation;
     }
+    if (Number.isFinite(record.trackerTps)) state.tps.push(record.trackerTps);
+    if (Number.isFinite(record.pingMs)) state.ping.push(record.pingMs);
+    if (Number.isFinite(record.rssi)) state.rssi.push(record.rssi);
+    if (Number.isFinite(record.batteryPct)) state.battery = record.batteryPct;
     if (record.rawAcceleration) state.rawAccelerationRows += 1;
     if (record.rawAngularVelocity) state.rawGyroRows += 1;
   }
@@ -140,6 +187,10 @@ export class Diagnostics {
           rotationChanged: state.rotationChanged,
           spanSeconds: Math.round(spanSeconds * 1000) / 1000,
           rowRateHz: spanSeconds > 0 ? Math.round((state.rows - 1) / spanSeconds * 100) / 100 : null,
+          tps: resumo(state.tps),
+          pingMs: resumo(state.ping),
+          rssiDbm: resumo(state.rssi),
+          batteryPct: state.battery,
           intervalMs: {
             median: quantile(sorted, 0.5),
             p95: quantile(sorted, 0.95),
