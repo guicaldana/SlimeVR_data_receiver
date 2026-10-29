@@ -334,6 +334,7 @@ ganhos_cadeia_caixa = []         # ganho da cadeia na caixa, antes do ajuste pel
 # Curvas de calibração com várias alturas: {"osc": [curva_E, curva_D], "cadeia": [...]},
 # cada curva é uma lista [(medido_cm, real_cm), ...] começando em (0, 0). Vazio = usa ganhos_metodo.
 curvas_metodo = {}
+detalhe_ultima_caixa = {}        # diagnóstico da última medida com o pé no objeto (teste da calibração)
 pontos_calibracao = {}           # {"osc": [pts_E, pts_D], ...} com (medido_cm, real_cm) da caixa
 # Avisa quando a razão real/medido de uma altura da caixa difere da outra em mais que isso (1.25 = 25%)
 LIMITE_DIVERGENCIA_CALIB = 1.25
@@ -1674,6 +1675,12 @@ def _clearance_osc_cm(p_esq, p_dir, p_quad):
     return max(0.0, (h_e - piso) * 100.0), max(0.0, (h_d - piso) * 100.0)
 
 
+def _deslocamentos_osc_cm(p_esq, p_dir, p_quad):
+    """Quanto cada pé e a pelve se moveram na vertical (cm) desde a calibração com os pés no chão."""
+    pelve = (p_quad[1] - yq_ref) * 100.0 if p_quad is not None and calibrado else float("nan")
+    return (p_esq[1] - chao_esq_ref) * 100.0, (p_dir[1] - chao_dir_ref) * 100.0, pelve
+
+
 def _altura_agora_cm():
     """Altura de cada pé (cm) neste instante, como na linha de feedback, ou None sem os pés."""
     with lock:
@@ -1712,7 +1719,8 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     print("    Pé em cima: fique PARADO.")
     _contagem("Amostragem em", 2, mostrar_altura=True)
     print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
-    amostras, amostras_osc, amostras_cad = [], [], []
+    global detalhe_ultima_caixa
+    amostras, amostras_osc, amostras_cad, amostras_desl = [], [], [], []
     t_fim = time.time() + TEMPO_CAIXA_S
     ultimo_print = 0.0
     while time.time() < t_fim and rodando:
@@ -1724,6 +1732,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
         if pe is not None and pd is not None:
             amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
             amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
+            amostras_desl.append(_deslocamentos_osc_cm(pe, pd, pq))
             cad = _clearance_cadeia_cm(qs)
             if cad is not None:
                 amostras_cad.append(cad[idx])
@@ -1733,6 +1742,11 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
         time.sleep(0.01)
     print(" " * 90, end="\r")
     med = lambda a: float(np.median(a)) if a else 0.0
+    # Para o diagnóstico: quanto subiu o pé de cima, quanto mexeu o de apoio, a pelve e a cadeia
+    desl = np.nanmedian(np.array(amostras_desl), axis=0) if amostras_desl else [float("nan")] * 3
+    detalhe_ultima_caixa = {"pe_cima_cm": float(desl[idx]), "pe_apoio_cm": float(desl[1 - idx]),
+                            "pelve_cm": float(desl[2]),
+                            "cadeia_cm": med(amostras_cad) if amostras_cad else float("nan")}
     print("    DESÇA o pé para o chão.")
     _aviso_sonoro(1)
     _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
@@ -1985,14 +1999,17 @@ def zerar_gravacao():
         tempo_inicial = time.time()
 
 
-def _testar_calibracao(altura_cm):
-    """Cada pé sobe uma vez no objeto. Devolve {pé: altura medida em cm}."""
+def _testar_calibracao(altura_cm, detalhes=None):
+    """Cada pé sobe uma vez no objeto. Devolve {pé: altura medida em cm}; o diagnóstico vai para detalhes."""
     medidas = {}
+    detalhes = {} if detalhes is None else detalhes
+    detalhes.clear()
     for pe, lado, idx in (("ESQ", "ESQUERDO", 0), ("DIR", "DIREITO", 1)):
         if pe not in (PES_ALTURA or ["ESQ", "DIR"]):
             continue
         bruto, _, _ = _medir_pe_na_caixa(lado, idx, altura_cm, objeto="objeto")
         medidas[pe] = bruto * (ganho_esq if idx == 0 else ganho_dir)
+        detalhes[pe] = dict(detalhe_ultima_caixa)
     return medidas
 
 
@@ -2009,17 +2026,27 @@ def verificar_calibracao():
         print(f"   🔎 TESTE DA CALIBRAÇÃO: objeto de {altura:.1f} cm "
               f"(tolerância ±{TOLERANCIA_VERIFICACAO_CM:.1f} cm)")
         print("=" * 90)
-        medidas = _testar_calibracao(altura)
+        detalhes = {}
+        medidas = _testar_calibracao(altura, detalhes)
         erros = {pe: m - altura for pe, m in medidas.items()}
         aprovado = bool(erros) and all(abs(e) <= TOLERANCIA_VERIFICACAO_CM for e in erros.values())
         tentativas.append({"altura_cm": altura,
                            "medido_cm": {pe: round(m, 2) for pe, m in medidas.items()},
                            "erro_cm": {pe: round(e, 2) for pe, e in erros.items()},
-                           "aprovado": aprovado})
+                           "aprovado": aprovado,
+                           "detalhes": {pe: {k: round(v, 2) for k, v in d.items()} for pe, d in detalhes.items()}})
         print()
         for pe, m in medidas.items():
             marca = "✓" if abs(erros[pe]) <= TOLERANCIA_VERIFICACAO_CM else "✗"
             print(f"    {marca} Pé {pe}: medido {m:5.1f} cm  (erro {erros[pe]:+.1f} cm)")
+        if detalhes:
+            print("\n    Diagnóstico (deslocamento vertical desde a calibração, com o pé no objeto):")
+            for pe, d in detalhes.items():
+                print(f"      Pé {pe} em cima: subiu {d['pe_cima_cm']:+5.1f} cm | pé de apoio {d['pe_apoio_cm']:+5.1f} cm"
+                      f" | pelve {d['pelve_cm']:+5.1f} cm | cadeia das pernas "
+                      + ("sem dados" if np.isnan(d['cadeia_cm']) else f"{d['cadeia_cm']:5.1f} cm"))
+            print("      O pé de apoio e a pelve deveriam ficar perto de 0. Pé de apoio negativo = ele 'afunda'")
+            print("      no SlimeVR (erro na perna de apoio); pé de cima alto com apoio em 0 = erro na perna que sobe.")
         if aprovado:
             print(f"\n  [✓] Calibração aprovada na {len(tentativas)}ª tentativa.")
             print("=" * 90)
