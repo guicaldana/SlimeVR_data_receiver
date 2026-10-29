@@ -123,6 +123,13 @@ TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 TEMPO_TRANSICAO_CALIB_S = 3   # calibração: segundos para subir e para descer o pé da caixa
 TEMPO_VIRAR_CAIXA_S = 10      # calibração com várias alturas: segundos para virar a caixa
 
+# Teste rápido da calibração antes do roteiro: cada pé sobe num objeto de altura conhecida
+# por TEMPO_CAIXA_S e o programa mostra a altura medida. Se o erro de algum pé passar de
+# TOLERANCIA_VERIFICACAO_CM, pede para refazer o reset do SlimeVR e calibra de novo.
+VERIFICAR_CALIBRACAO = False
+ALTURA_VERIFICACAO_CM = 7.0         # objeto do teste (None = menor altura de teste)
+TOLERANCIA_VERIFICACAO_CM = 1.0
+
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
 ROTEIRO_GUIADO = True
@@ -1675,9 +1682,9 @@ def _contagem(texto, segundos):
     print(" " * 60, end="\r")
 
 
-def _medir_pe_na_caixa(lado, idx, altura_cm):
+def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     """Pede um pé sobre a caixa e devolve as medianas (pipeline, osc, cadeia) brutas."""
-    print(f"\n👉 SUBA o pé {lado} na caixa de {altura_cm:.1f} cm (o outro pé fica no chão).")
+    print(f"\n👉 SUBA o pé {lado} n{'a' if objeto == 'caixa' else 'o'} {objeto} de {altura_cm:.1f} cm (o outro pé fica no chão).")
     _aviso_sonoro(1)
     _contagem("Subindo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1))
     print("    Pé em cima: fique PARADO.")
@@ -1935,6 +1942,12 @@ def executar_calibracao_inicial():
         calibrar_ganho_caixa()
 
     # 3. Zera os dados anteriores para que o teste de marcha comece limpo a partir de agora
+    zerar_gravacao()
+
+
+def zerar_gravacao():
+    """Apaga os dados capturados até aqui e recomeça o relógio da gravação."""
+    global tempo_inicial
     with lock:
         for t_id in dados:
             dados[t_id] = {k: [] for k in dados[t_id]}
@@ -1943,6 +1956,62 @@ def executar_calibracao_inicial():
         for seg in dados_quat:
             dados_quat[seg] = {"t": [], "q": []}
         tempo_inicial = time.time()
+
+
+def _testar_calibracao(altura_cm):
+    """Cada pé sobe uma vez no objeto. Devolve {pé: altura medida em cm}."""
+    medidas = {}
+    for pe, lado, idx in (("ESQ", "ESQUERDO", 0), ("DIR", "DIREITO", 1)):
+        if pe not in (PES_ALTURA or ["ESQ", "DIR"]):
+            continue
+        bruto, _, _ = _medir_pe_na_caixa(lado, idx, altura_cm, objeto="objeto")
+        medidas[pe] = bruto * (ganho_esq if idx == 0 else ganho_dir)
+    return medidas
+
+
+def verificar_calibracao():
+    """
+    Teste rápido antes do roteiro: o pé sobe no objeto de altura conhecida e o programa
+    mostra a altura medida. Com erro acima de TOLERANCIA_VERIFICACAO_CM, pede para refazer
+    o reset do SlimeVR e repete a calibração e o teste. As tentativas vão para o PARTICIPANTE.
+    """
+    altura = ALTURA_VERIFICACAO_CM or (min(ALTURAS_TESTE_CM) if ALTURAS_TESTE_CM else ALTURA_CAIXA_CM)
+    tentativas = []
+    while rodando:
+        print("\n" + "=" * 90)
+        print(f"   🔎 TESTE DA CALIBRAÇÃO: objeto de {altura:.1f} cm "
+              f"(tolerância ±{TOLERANCIA_VERIFICACAO_CM:.1f} cm)")
+        print("=" * 90)
+        medidas = _testar_calibracao(altura)
+        erros = {pe: m - altura for pe, m in medidas.items()}
+        aprovado = bool(erros) and all(abs(e) <= TOLERANCIA_VERIFICACAO_CM for e in erros.values())
+        tentativas.append({"altura_cm": altura,
+                           "medido_cm": {pe: round(m, 2) for pe, m in medidas.items()},
+                           "erro_cm": {pe: round(e, 2) for pe, e in erros.items()},
+                           "aprovado": aprovado})
+        print()
+        for pe, m in medidas.items():
+            marca = "✓" if abs(erros[pe]) <= TOLERANCIA_VERIFICACAO_CM else "✗"
+            print(f"    {marca} Pé {pe}: medido {m:5.1f} cm  (erro {erros[pe]:+.1f} cm)")
+        if aprovado:
+            print(f"\n  [✓] Calibração aprovada na {len(tentativas)}ª tentativa.")
+            print("=" * 90)
+            break
+        _aviso_sonoro(2)
+        print(f"\n  [✗] Erro acima de {TOLERANCIA_VERIFICACAO_CM:.1f} cm. Refaça a calibração do SlimeVR:")
+        print("      1. Confira se as faixas estão firmes e os trackers não giraram.")
+        print("      2. No SlimeVR, faça o Reset mounting e depois o Full reset (em pé, reto).")
+        print("      3. Volte aqui com os dois pés no chão.")
+        resp = input("    [Enter] calibrar e testar de novo | [c] continuar mesmo assim: ").strip().lower()
+        if resp in ("c", "continuar"):
+            print("  [Aviso] Seguindo com a calibração reprovada.")
+            print("=" * 90)
+            break
+        executar_calibracao_inicial()
+    if PARTICIPANTE is not None:
+        PARTICIPANTE["verificacao_calibracao"] = tentativas
+    # O teste não entra na gravação: o roteiro começa do zero
+    zerar_gravacao()
 
 
 def _aviso_sonoro(vezes=1):
@@ -2073,6 +2142,12 @@ def avaliar_altura_conhecida():
     for ref, cond, pe, medido, erro, tr, rep in linhas:
         print(f"    objeto {ref:5.1f} cm | {rep}ª vez | tronco {tr:3.0f}° | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm)")
     print(f"    erro absoluto médio: {np.mean([abs(l[4]) for l in linhas]):.1f} cm")
+    tentativas = (PARTICIPANTE or {}).get("verificacao_calibracao") or []
+    if tentativas:
+        ult = tentativas[-1]
+        res = " | ".join(f"pé {pe} {m:.1f} cm ({ult['erro_cm'][pe]:+.1f})" for pe, m in ult["medido_cm"].items())
+        print(f"    Teste da calibração ({ult['altura_cm']:.1f} cm, {len(tentativas)} tentativa(s), "
+              f"{'aprovado' if ult['aprovado'] else 'REPROVADO'}): {res}")
     refs = sorted({l[0] for l in linhas})
     if any(sum(1 for l in linhas if l[0] == r) > 2 for r in refs):
         print("\n    Resumo por objeto e pé (média ± desvio das repetições):")
@@ -2333,6 +2408,8 @@ def main():
 
     # 3. Rotina de Calibração Estática Inicial
     executar_calibracao_inicial()
+    if VERIFICAR_CALIBRACAO and calibrado:
+        verificar_calibracao()
 
     print("\n" + "=" * 90)
     if ROTEIRO_GUIADO:
