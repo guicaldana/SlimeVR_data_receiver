@@ -129,6 +129,10 @@ TEMPO_VIRAR_CAIXA_S = 10      # calibração com várias alturas: segundos para 
 VERIFICAR_CALIBRACAO = False
 ALTURA_VERIFICACAO_CM = 7.0         # objeto do teste (None = menor altura de teste)
 TOLERANCIA_VERIFICACAO_CM = 1.0
+# No teste, o tronco também é conferido: inclinação para frente (peito) e para o lado (quadril)
+# em relação à calibração. Acima disso, a medida do pé é reprovada (o SlimeVR passa a
+# inclinação do tronco para a altura do pé).
+LIMITE_TRONCO_TESTE_GRAUS = 5.0
 
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
@@ -322,6 +326,8 @@ chao_esq_ref = 0.0
 chao_dir_ref = 0.0
 yq_ref = 0.0                     # Altura da pelve (Y) no instante da calibração
 pitch_tronco_ref = 0.0           # Inclinação natural do peito na calibração (graus)
+roll_atual = {TRACKER_PEITO: None, TRACKER_QUADRIL: None}   # inclinação lateral (graus) no SlimeVR
+roll_ref = {TRACKER_PEITO: 0.0, TRACKER_QUADRIL: 0.0}       # inclinação lateral na calibração
 fases_sessao = []                # (etapa, t0, t1) do roteiro guiado, no tempo da gravação
 etapa_atual = ""                 # texto curto mostrado na linha de feedback
 roteiro_terminou = False
@@ -392,6 +398,22 @@ def extrair_pitch_e_yaw(rotacao, inverter_pitch=False):
     if inverter_pitch:
         pitch = -pitch
     return pitch, yaw
+
+
+def extrair_roll(rotacao):
+    """Inclinação lateral (graus, em torno do eixo Z) a partir de Euler ou Quaternion."""
+    if len(rotacao) == 4:
+        x, y, z, w = rotacao
+        return math.degrees(math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (x * x + z * z)))
+    if len(rotacao) >= 3:
+        roll = float(rotacao[2])
+        return roll - 360.0 if roll > 180 else roll
+    return 0.0
+
+
+def _dif_angulo(a, b):
+    """a - b em graus, no intervalo (-180, 180]."""
+    return (a - b + 180.0) % 360.0 - 180.0
 
 
 def converter_quaternion_cabeca(x, y, z, w):
@@ -471,8 +493,10 @@ def osc_handler_9000(address, *args):
                 dados[TRACKER_PEITO]["t"].append(t_rel)
                 dados[TRACKER_PEITO]["pitch"].append(pitch)
                 rot_atual[TRACKER_PEITO] = pitch
+                roll_atual[TRACKER_PEITO] = extrair_roll(args)
             elif tracker_id == TRACKER_QUADRIL:
                 pitch, yaw = extrair_pitch_e_yaw(args)
+                roll_atual[TRACKER_QUADRIL] = extrair_roll(args)
                 dados[TRACKER_QUADRIL]["pitch"].append(pitch)
                 dados[TRACKER_QUADRIL]["yaw"].append(yaw)
                 rot_atual[TRACKER_QUADRIL] = (pitch, yaw)
@@ -1695,9 +1719,34 @@ def _altura_agora_cm():
     return (e if e >= limiar_ruido_chao else 0.0), (d if d >= limiar_ruido_chao else 0.0)
 
 
+def _tronco_agora_graus():
+    """(frente, lado) em graus em relação à calibração: frente pelo peito, lado pelo quadril."""
+    with lock:
+        pitch = rot_atual.get(TRACKER_PEITO)
+        roll_q = roll_atual.get(TRACKER_QUADRIL)
+        roll_p = roll_atual.get(TRACKER_PEITO)
+    frente = pitch - pitch_tronco_ref if pitch is not None else float("nan")
+    if roll_q is not None:
+        lado = _dif_angulo(roll_q, roll_ref[TRACKER_QUADRIL])
+    elif roll_p is not None:
+        lado = _dif_angulo(roll_p, roll_ref[TRACKER_PEITO])
+    else:
+        lado = float("nan")
+    return frente, lado
+
+
+def _tronco_passou(frente, lado):
+    return max(abs(np.nan_to_num(frente)), abs(np.nan_to_num(lado))) > LIMITE_TRONCO_TESTE_GRAUS
+
+
 def _texto_altura():
     alt = _altura_agora_cm()
-    return " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
+    txt = " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
+    frente, lado = _tronco_agora_graus()
+    if not (np.isnan(frente) and np.isnan(lado)):
+        aviso = " <<RETO!" if _tronco_passou(frente, lado) else ""
+        txt += f" | Tronco fr{frente:+3.0f}° lado{lado:+3.0f}°{aviso}"
+    return txt
 
 
 def _contagem(texto, segundos, mostrar_altura=False):
@@ -1708,7 +1757,14 @@ def _contagem(texto, segundos, mostrar_altura=False):
         extra = _texto_altura() if mostrar_altura else ""
         print(f"    {texto} {cont}s...{extra}   ", end="\r", flush=True)
         time.sleep(INTERVALO_FEEDBACK if mostrar_altura else 0.2)
-    print(" " * 90, end="\r")
+    print(" " * 110, end="\r")
+
+
+def _maior_abs(valores):
+    """Valor de maior módulo (com sinal), ignorando NaN; NaN se não houver valores."""
+    v = np.asarray(valores, dtype=float)
+    v = v[~np.isnan(v)]
+    return float(v[np.argmax(np.abs(v))]) if len(v) else float("nan")
 
 
 def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
@@ -1720,7 +1776,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     _contagem("Amostragem em", 2, mostrar_altura=True)
     print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
     global detalhe_ultima_caixa
-    amostras, amostras_osc, amostras_cad, amostras_desl = [], [], [], []
+    amostras, amostras_osc, amostras_cad, amostras_desl, amostras_tronco = [], [], [], [], []
     t_fim = time.time() + TEMPO_CAIXA_S
     ultimo_print = 0.0
     while time.time() < t_fim and rodando:
@@ -1733,6 +1789,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
             amostras.append(_clearance_bruto_cm(pe, pd, pq, qs)[idx])
             amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
             amostras_desl.append(_deslocamentos_osc_cm(pe, pd, pq))
+            amostras_tronco.append(_tronco_agora_graus())
             cad = _clearance_cadeia_cm(qs)
             if cad is not None:
                 amostras_cad.append(cad[idx])
@@ -1740,12 +1797,15 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
             ultimo_print = time.time()
             print(f"    Medindo {max(0.0, t_fim - ultimo_print):3.1f}s{_texto_altura()}   ", end="\r", flush=True)
         time.sleep(0.01)
-    print(" " * 90, end="\r")
+    print(" " * 110, end="\r")
     med = lambda a: float(np.median(a)) if a else 0.0
     # Para o diagnóstico: quanto subiu o pé de cima, quanto mexeu o de apoio, a pelve e a cadeia
     desl = np.nanmedian(np.array(amostras_desl), axis=0) if amostras_desl else [float("nan")] * 3
     detalhe_ultima_caixa = {"pe_cima_cm": float(desl[idx]), "pe_apoio_cm": float(desl[1 - idx]),
                             "pelve_cm": float(desl[2]),
+                            # maior inclinação do tronco durante a medida (graus, com sinal)
+                            "tronco_frente_graus": _maior_abs([a[0] for a in amostras_tronco]),
+                            "tronco_lado_graus": _maior_abs([a[1] for a in amostras_tronco]),
                             "cadeia_cm": med(amostras_cad) if amostras_cad else float("nan")}
     print("    DESÇA o pé para o chão.")
     _aviso_sonoro(1)
@@ -1859,7 +1919,7 @@ def executar_calibracao_inicial():
     global dist_qp_e_ref, dist_qp_d_ref, offset_calib_pernas
     global chao_esq_ref, chao_dir_ref, limiar_ruido_chao, calibrado
     global L_coxa_pe_e_ref, L_coxa_pe_d_ref, yq_ref
-    global tempo_inicial, cadeia, pitch_tronco_ref
+    global tempo_inicial, cadeia, pitch_tronco_ref, roll_ref
 
     print("\n" + "=" * 90)
     print("   🎯 ETAPA 1: CALIBRAÇÃO ESTÁTICA DOS PÉS E CHÃO (NIVELAMENTO EM 0.0 CM)")
@@ -1914,6 +1974,7 @@ def executar_calibracao_inicial():
     amostras_lcd = []
     amostras_pos = {"quad": [], "pe_e": [], "pe_d": [], "joelho_e": [], "joelho_d": []}
     amostras_quat = {seg: [] for seg in cadeia_pernas.SEGMENTOS}
+    amostras_roll = {TRACKER_PEITO: [], TRACKER_QUADRIL: []}
 
     t_fim = time.time() + TEMPO_CALIB_ESTATICA_S
     while time.time() < t_fim and rodando:
@@ -1924,6 +1985,10 @@ def executar_calibracao_inicial():
             pce = pos_atual.get(TRACKER_COXA_ESQ)
             pcd = pos_atual.get(TRACKER_COXA_DIR)
             qs = dict(quat_atual)
+            rolls = dict(roll_atual)
+        for k, r in rolls.items():
+            if r is not None:
+                amostras_roll[k].append(r)
         if pe is not None and pd is not None and pq is not None:
             amostras_ye.append(pe[1])
             amostras_yd.append(pd[1])
@@ -1968,6 +2033,9 @@ def executar_calibracao_inicial():
             tp, pp = np.array(tp), np.array(pp)
             pitch_tronco_ref = float(np.median(pp[tp >= tp[-1] - 3.0]))
             print(f"      • Tronco natural : {pitch_tronco_ref:+.1f}° (referência da inclinação)")
+        for k, rs in amostras_roll.items():
+            if rs:
+                roll_ref[k] = float(np.degrees(np.angle(np.mean(np.exp(1j * np.radians(rs))))))
         print("=" * 90)
         print("  [✓] CALIBRAÇÃO CONCLUÍDA COM SUCESSO!")
         print(f"      • Ref. Solo E    : {chao_esq_ref:+.3f} m  |  D : {chao_dir_ref:+.3f} m (ambos nivelados a 0.0 cm)")
@@ -2029,16 +2097,26 @@ def verificar_calibracao():
         detalhes = {}
         medidas = _testar_calibracao(altura, detalhes)
         erros = {pe: m - altura for pe, m in medidas.items()}
-        aprovado = bool(erros) and all(abs(e) <= TOLERANCIA_VERIFICACAO_CM for e in erros.values())
+        tronco_ok = {pe: not _tronco_passou(d.get("tronco_frente_graus", float("nan")),
+                                            d.get("tronco_lado_graus", float("nan")))
+                     for pe, d in detalhes.items()}
+        aprovado = (bool(erros) and all(abs(e) <= TOLERANCIA_VERIFICACAO_CM for e in erros.values())
+                    and all(tronco_ok.values()))
         tentativas.append({"altura_cm": altura,
                            "medido_cm": {pe: round(m, 2) for pe, m in medidas.items()},
                            "erro_cm": {pe: round(e, 2) for pe, e in erros.items()},
                            "aprovado": aprovado,
+                           "tronco_ok": tronco_ok,
                            "detalhes": {pe: {k: round(v, 2) for k, v in d.items()} for pe, d in detalhes.items()}})
         print()
         for pe, m in medidas.items():
-            marca = "✓" if abs(erros[pe]) <= TOLERANCIA_VERIFICACAO_CM else "✗"
-            print(f"    {marca} Pé {pe}: medido {m:5.1f} cm  (erro {erros[pe]:+.1f} cm)")
+            marca = "✓" if abs(erros[pe]) <= TOLERANCIA_VERIFICACAO_CM and tronco_ok.get(pe, True) else "✗"
+            d = detalhes.get(pe, {})
+            fr, la = d.get("tronco_frente_graus", float("nan")), d.get("tronco_lado_graus", float("nan"))
+            txt_tr = "" if np.isnan(fr) and np.isnan(la) else f"  | tronco: frente {fr:+.0f}°, lado {la:+.0f}°"
+            if not tronco_ok.get(pe, True):
+                txt_tr += f"  << tronco inclinado (> {LIMITE_TRONCO_TESTE_GRAUS:.0f}°)"
+            print(f"    {marca} Pé {pe}: medido {m:5.1f} cm  (erro {erros[pe]:+.1f} cm){txt_tr}")
         if detalhes:
             print("\n    Diagnóstico (deslocamento vertical desde a calibração, com o pé no objeto):")
             for pe, d in detalhes.items():
@@ -2052,7 +2130,12 @@ def verificar_calibracao():
             print("=" * 90)
             break
         _aviso_sonoro(2)
-        print(f"\n  [✗] Erro acima de {TOLERANCIA_VERIFICACAO_CM:.1f} cm. Refaça a calibração do SlimeVR:")
+        if not all(tronco_ok.values()):
+            print(f"\n  [✗] O tronco inclinou mais de {LIMITE_TRONCO_TESTE_GRAUS:.0f}° com o pé no objeto.")
+            print("      Suba mantendo o tronco reto e o quadril nivelado (mãos na cintura ou apoio numa barra).")
+            print("      Se a pessoa estava reta e mesmo assim aparece inclinação, a montagem do peito/quadril")
+            print("      no SlimeVR está errada: refaça a Calibração de Montagem (Corpo) e o Redefinir Tudo.")
+        print(f"\n  [✗] Erro acima de {TOLERANCIA_VERIFICACAO_CM:.1f} cm ou tronco inclinado. Refaça a calibração do SlimeVR:")
         print("      1. Confira se as faixas estão firmes e os trackers não giraram.")
         print("      2. No SlimeVR, faça o Reset mounting e depois o Full reset (em pé, reto).")
         print("      3. Volte aqui com os dois pés no chão.")
