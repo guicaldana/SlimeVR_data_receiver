@@ -351,6 +351,7 @@ def aplicar_calibracao(valor, metodo, idx):
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
+ZONA_MORTA_MAX_CM = 1.5         # teto da zona morta: acima disso apagava alturas reais (29/10)
 delta_cal_esq = 0.0
 delta_cal_dir = 0.0
 chao_base_calibrado = None
@@ -1914,6 +1915,11 @@ def executar_calibracao_inicial():
         sigma_e = float(np.std(amostras_ye)) * 100.0
         sigma_d = float(np.std(amostras_yd)) * 100.0
         limiar_ruido_chao = max(1.0, 3.0 * max(sigma_e, sigma_d))
+        if limiar_ruido_chao > ZONA_MORTA_MAX_CM:
+            # Sem teto, um pé parado num objeto baixo (7 cm) virava 0 cm no resultado
+            print(f"\n   [Aviso] Pés tremeram na calibração (ruído {max(sigma_e, sigma_d):.1f} cm). "
+                  f"Zona morta limitada a {ZONA_MORTA_MAX_CM:.1f} cm. Se puder, repita com o participante bem parado.")
+            limiar_ruido_chao = ZONA_MORTA_MAX_CM
 
         calibrado = True
         cadeia = calibrar_cadeia(amostras_pos, amostras_quat)
