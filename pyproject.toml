@@ -1,0 +1,16 @@
+[project]
+name = "slimevr-data-receiver"
+version = "0.1.0"
+description = "Captura dos dados das IMUs do SlimeVR (OSC, VMC e SolarXR) para altura do pé e comprimento do passo"
+requires-python = ">=3.10"
+dependencies = [
+    "python-osc",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "reportlab",
+]
+
+[tool.uv]
+# Scripts soltos, não é um pacote para instalar
+package = false

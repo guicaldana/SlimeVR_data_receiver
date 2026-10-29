@@ -9,12 +9,21 @@ Abra o **PowerShell** ou **Prompt de Comando** e rode:
 ```powershell
 git clone https://github.com/guicaldana/SlimeVR_data_receiver.git
 cd SlimeVR_data_receiver
+git checkout claude/project-thread-ex5cxe   # enquanto o PR #1 não entra no main
 ```
 
 ### 2. Criar o ambiente virtual e instalar as dependências
 ```powershell
-uv venv
-uv pip install python-osc numpy matplotlib
+uv sync
+```
+O `uv sync` lê o `pyproject.toml` (python-osc, numpy, scipy, matplotlib, reportlab), cria o `.venv` e instala tudo.
+
+### 3. Cliente SolarXR (Node.js 24 ou mais novo)
+Os experimentos leem coxas, canelas e a altura do SlimeVR pelo SolarXR, com o cliente em Node:
+```powershell
+cd slimevr_client_raw
+npm install
+cd ..
 ```
 
 > [!NOTE]
