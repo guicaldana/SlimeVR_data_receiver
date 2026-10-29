@@ -3,7 +3,7 @@ Piloto: coleta única por participante com os três circuitos de marcas e altura
 
 Baseado no calculo_passo.py (mesmos cálculos), com o protocolo do piloto:
   1. nome e altura do participante e as alturas dos objetos de teste;
-  2. calibração (caixa de 7 cm);
+  2. calibração estática (sem caixa: basta a calibração do SlimeVR);
   3. uma caminhada em cada circuito A, B e C (mesmo corredor), com o tronco reto,
      em ordem sorteada para cada participante;
   4. pé E e pé D sobre cada objeto de teste, com o tronco reto.
@@ -113,7 +113,7 @@ TRONCO_INCLINADO_GRAUS = 30.0  # a partir daqui só cadeia; entre os dois, trans
 CADEIA_ESCALA_NA_MARCHA = False  # 20/10: desligado (o ganho da caixa acertou a caixa reta e inclinada)
 
 # Calibração de ganho por pé: pisar numa caixa de altura conhecida com cada pé
-CALIBRAR_CAIXA = True
+CALIBRAR_CAIXA = False   # 29/10: sem caixa; basta a calibração do SlimeVR
 ALTURA_CAIXA_CM = 7.0    # caixa de calibração (antes de 23/10 o valor usado era 6,7)
 # Alturas da calibração (cm). Com uma altura, o ganho é um fator só (ALTURA_CAIXA_CM).
 # Com duas ou mais, cada método e cada pé ganha uma curva que passa pelo chão (0, 0) e
