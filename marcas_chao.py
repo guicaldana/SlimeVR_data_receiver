@@ -28,9 +28,9 @@ def montar_circuito(blocos):
 
 
 # Cada circuito tem um comprimento de passo fixo e 18 pegadas depois da partida
-# (9 de cada pé). Os comprimentos ainda podem mudar: basta editar COMPRIMENTO_FIXO_CM.
+# (9 de cada pé). Para mudar os comprimentos, basta editar COMPRIMENTO_FIXO_CM.
 PEGADAS_POR_CIRCUITO = 18
-COMPRIMENTO_FIXO_CM = {"A": 30, "B": 35, "C": 40}   # provável (24/10); ainda pode mudar
+COMPRIMENTO_FIXO_CM = {"A": 30, "B": 40, "C": 50}   # definido em 29/10 (distância entre os calcanhares)
 BLOCOS = {c: [(comp, PEGADAS_POR_CIRCUITO)] for c, comp in COMPRIMENTO_FIXO_CM.items()}
 CIRCUITOS = {c: montar_circuito(b) for c, b in BLOCOS.items()}
 # Percurso usado nos testes de 20/10/2026
