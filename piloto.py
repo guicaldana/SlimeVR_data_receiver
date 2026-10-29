@@ -126,8 +126,8 @@ TEMPO_VIRAR_CAIXA_S = 10      # calibração com várias alturas: segundos para 
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
 ROTEIRO_GUIADO = True
-# Três circuitos, cada um com um comprimento de passo fixo e 18 pegadas (marcas_chao.py).
-TEMPO_CAMINHADA_S = {"A": 25, "B": 25, "C": 25}
+# Três circuitos, cada um com um comprimento de passo fixo e 20 pegadas (marcas_chao.py).
+TEMPO_CAMINHADA_S = {"A": 30, "B": 30, "C": 30}   # 20 pegadas (até 10 m no circuito C)
 TEMPO_VOLTA_S = 20
 # Uma coleta só: os três circuitos ficam no mesmo corredor (uma cor de fita para cada).
 # Uma caminhada com o tronco reto em cada circuito.

@@ -162,7 +162,7 @@ uv run python piloto.py
 ```
 
 ### `experimento_comprimento.py` — Experimento só de comprimento de passada (sem objetos)
-Mesmo cadastro e rodadas (1 = familiarização, 2 = coleta) do `piloto.py`, mas o roteiro tem só as caminhadas nos três circuitos (30, 40 e 50 cm entre os calcanhares, `COMPRIMENTO_FIXO_CM` em `marcas_chao.py`), com o tronco reto. Não pede as alturas dos objetos e não tem calibração da caixa: basta a calibração do SlimeVR (reset completo e mounting) e a calibração estática do programa. Na rodada de coleta a ordem dos circuitos é sorteada. São 135 s de roteiro. A pasta termina em `_comprimento_familiarizacao` ou `_comprimento_coleta`.
+Mesmo cadastro e rodadas (1 = familiarização, 2 = coleta) do `piloto.py`, mas o roteiro tem só as caminhadas nos três circuitos (30, 40 e 50 cm entre os calcanhares, `COMPRIMENTO_FIXO_CM` em `marcas_chao.py`), com o tronco reto. Não pede as alturas dos objetos e não tem calibração da caixa: basta a calibração do SlimeVR (reset completo e mounting) e a calibração estática do programa. Na rodada de coleta a ordem dos circuitos é sorteada. São 150 s de roteiro (30 s por caminhada). A pasta termina em `_comprimento_familiarizacao` ou `_comprimento_coleta`.
 
 ```powershell
 uv run python experimento_comprimento.py
@@ -183,11 +183,11 @@ O comprimento do passo é conferido com um percurso de marcas no chão (`CIRCUIT
 
 | Circuito | Comprimento do passo | Pegadas | Total |
 |---|---|---|---|
-| A, curtos | 30 cm | 18 | 5,40 m |
-| B, médios | 35 cm | 18 | 6,30 m |
-| C, longos | 40 cm | 18 | 7,20 m |
+| A, curtos | 30 cm | 20 | 6,00 m |
+| B, médios | 40 cm | 20 | 8,00 m |
+| C, longos | 50 cm | 20 | 10,00 m |
 
-Cada circuito tem um comprimento de passo fixo e 18 pegadas depois da partida (9 de cada pé). Os comprimentos (30, 40 e 50 cm, distância entre os calcanhares) ficam em `COMPRIMENTO_FIXO_CM`, em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
+Cada circuito tem um comprimento de passo fixo e 20 pegadas depois da partida (10 de cada pé). Os comprimentos (30, 40 e 50 cm, distância entre os calcanhares) ficam em `COMPRIMENTO_FIXO_CM`, em `marcas_chao.py`. Em todos, o pé D começa na marca 0 e o primeiro passo é do pé E; depois da última marca a pessoa junta os pés (esse passo de parada não conta). As coletas antigas, sem circuito salvo, usam o percurso de 20/10. Nas caminhadas do roteiro a pessoa parte com o pé direito na marca 0 e pisa com o calcanhar em cada marca. No fim da coleta, `calculo_passo.py` liga cada passo detectado à marca correspondente (pela ordem e pelo pé) e mostra o erro de cada passo.
 
 Cada coleta fica em `dados/participantes/<Nome>/AAAAMMDD_HHMMSS/` (as coletas antigas estão em `dados/sessoes/`). Depois de algumas sessões:
 
