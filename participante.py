@@ -185,8 +185,8 @@ def criar_pasta_coleta(participante, base=PASTA_PARTICIPANTES):
     data_hora = time.strftime("%Y%m%d_%H%M%S")
     if participante.get("circuito"):
         data_hora += f"_circuito{participante['circuito']}"
-    if participante.get("experimento") in ("altura", "comprimento"):
-        data_hora += "_" + participante["experimento"]
+    if participante.get("experimento") not in (None, "", "completo"):   # "altura", "livre", ...
+        data_hora += f"_{participante['experimento']}"
     if participante.get("rodada"):
         data_hora += f"_{participante['rodada']}"
     pasta_participante = os.path.join(base, nome_para_pasta(participante["nome"]))
