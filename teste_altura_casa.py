@@ -7,6 +7,8 @@ e a pelve se moveram na vertical desde a calibração (o pé de apoio e a pelve 
 perto de 0; pé de apoio negativo = ele "afunda" no SlimeVR).
 Teclas: R = calibrar de novo (dois pés no chão) | E = pé E em cima | D = pé D em cima |
         C = dois pés no chão | Ctrl+C = sair
+Mostra também o ângulo de cada coxa e canela em relação à vertical, pelas IMUs (0° = como na
+calibração em pé).
 As teclas E/D/C só marcam o momento nos dados. Ao sair, salva os dados brutos (posições OSC de
 todos os trackers, rotações das coxas e canelas, tronco, marcas) e as proporções do SlimeVR em
 dados/debug_casa/<AAAAMMDD_HHMMSS>/ para análise.
@@ -19,6 +21,8 @@ import os
 import subprocess
 import threading
 import time
+
+import numpy as np
 
 import participante as cadastro
 import piloto
@@ -64,6 +68,36 @@ def texto_diagnostico():
     return f" | Desde a calibração: pé E {e:+5.1f} pé D {d:+5.1f} pelve {q:+5.1f} cm"
 
 
+ROTULOS_SEG = (("LEFT_UPPER_LEG", "coxa E"), ("RIGHT_UPPER_LEG", "coxa D"),
+               ("LEFT_LOWER_LEG", "canela E"), ("RIGHT_LOWER_LEG", "canela D"))
+
+
+def angulos_pernas():
+    """Ângulo (graus) de cada coxa e canela em relação à vertical, pelas IMUs (SolarXR).
+
+    Zero = como estava na calibração (dois pés no chão, em pé)."""
+    cad = piloto.cadeia
+    if cad is None or not getattr(cad, "calibrado", False):
+        return None
+    with piloto.lock:
+        quats = dict(piloto.quat_atual)
+    ang = {}
+    for seg, _ in ROTULOS_SEG:
+        q = quats.get(seg)
+        if q is None:
+            return None
+        v = cad.vetor(seg, np.asarray(q, dtype=float))[0]
+        ang[seg] = float(np.degrees(np.arccos(np.clip(-v[1] / np.linalg.norm(v), -1, 1))))
+    return ang
+
+
+def texto_angulos():
+    ang = angulos_pernas()
+    if ang is None:
+        return "   Ângulos: aguardando as IMUs das pernas (SolarXR)"
+    return "   Ângulos da vertical: " + " | ".join(f"{rot} {ang[seg]:4.0f}°" for seg, rot in ROTULOS_SEG)
+
+
 MARCAS = {"e": "pe_E_em_cima", "d": "pe_D_em_cima", "c": "chao"}
 TRACKERS = [piloto.TRACKER_QUADRIL, piloto.TORNOZELO_ESQ, piloto.TORNOZELO_DIR,
             piloto.TRACKER_COXA_ESQ, piloto.TRACKER_COXA_DIR]
@@ -96,6 +130,9 @@ def amostrar(marca):
     for seg, q in quats.items():
         for i, c in enumerate("xyzw"):
             linha[f"{seg}_q{c}"] = q[i] if q is not None else ""
+    ang = angulos_pernas() or {}
+    for seg, rot in ROTULOS_SEG:
+        linha[f"angulo_{rot.replace(' ', '_')}_graus"] = round(ang[seg], 1) if seg in ang else ""
     linhas.append(linha)
 
 
@@ -116,6 +153,8 @@ def salvar():
 
 
 def main():
+    if os.name == "nt":
+        os.system("")   # liga as cores/códigos ANSI no console do Windows
     proc = iniciar_captura()
     piloto.executar_calibracao_inicial()
     registrar_calibracao()
@@ -125,7 +164,7 @@ def main():
         while True:
             k = tecla()
             if k == "r":
-                print()
+                print("\n")
                 piloto.executar_calibracao_inicial()
                 registrar_calibracao()
                 marca = "chao"
@@ -133,10 +172,12 @@ def main():
             elif k in MARCAS:
                 marca = MARCAS[k]
             amostrar(marca)
-            print(f"   [{marca}] {piloto._texto_altura().strip(' |')}{texto_diagnostico()}   ", end="\r", flush=True)
+            # duas linhas que se atualizam no lugar (ESC[2K apaga a linha, ESC[1A sobe uma)
+            print(f"\033[2K   [{marca}] {piloto._texto_altura().strip(' |')}{texto_diagnostico()}\n"
+                  f"\033[2K{texto_angulos()}\033[1A\r", end="", flush=True)
             time.sleep(piloto.INTERVALO_FEEDBACK)
     except KeyboardInterrupt:
-        print("\n   Fim.")
+        print("\n\n   Fim.")
     finally:
         piloto.rodando = False
         if proc:
