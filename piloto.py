@@ -133,6 +133,11 @@ TOLERANCIA_VERIFICACAO_CM = 1.0
 # em relação à calibração. Acima disso, a medida do pé é reprovada (o SlimeVR passa a
 # inclinação do tronco para a altura do pé).
 LIMITE_TRONCO_TESTE_GRAUS = 5.0
+# Na mesma pessoa e no mesmo objeto, mudar a posição da perna mudou a leitura em até 6 cm
+# (01/11). Por isso cada pé sobe REPETICOES_VERIFICACAO vezes no teste, e as subidas do mesmo
+# pé não podem diferir mais que TOLERANCIA_REPETICAO_CM (postura de subida instável).
+REPETICOES_VERIFICACAO = 2
+TOLERANCIA_REPETICAO_CM = 1.0
 
 # Roteiro guiado: cada etapa tem um tempo fixo e o programa avisa a troca.
 # Ao terminar, a gravação encerra sozinha (Ctrl + C continua funcionando).
@@ -1760,6 +1765,27 @@ def _contagem(texto, segundos, mostrar_altura=False):
     print(" " * 110, end="\r")
 
 
+SEGMENTOS_PERNAS = {"ESQ": ("LEFT_UPPER_LEG", "LEFT_LOWER_LEG"),
+                    "DIR": ("RIGHT_UPPER_LEG", "RIGHT_LOWER_LEG")}
+
+
+def _angulos_pernas_graus():
+    """{seg: ângulo da vertical em graus} de cada coxa e canela pelas IMUs (0° = como na calibração em pé)."""
+    if cadeia is None or not getattr(cadeia, "calibrado", False):
+        return {}
+    with lock:
+        quats = dict(quat_atual)
+    ang = {}
+    for segs in SEGMENTOS_PERNAS.values():
+        for seg in segs:
+            q = quats.get(seg)
+            if q is None:
+                continue
+            v = cadeia.vetor(seg, np.asarray(q, dtype=float))[0]
+            ang[seg] = float(np.degrees(np.arccos(np.clip(-v[1] / np.linalg.norm(v), -1, 1))))
+    return ang
+
+
 def _maior_abs(valores):
     """Valor de maior módulo (com sinal), ignorando NaN; NaN se não houver valores."""
     v = np.asarray(valores, dtype=float)
@@ -1777,6 +1803,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
     global detalhe_ultima_caixa
     amostras, amostras_osc, amostras_cad, amostras_desl, amostras_tronco = [], [], [], [], []
+    amostras_ang = []
     t_fim = time.time() + TEMPO_CAIXA_S
     ultimo_print = 0.0
     while time.time() < t_fim and rodando:
@@ -1790,6 +1817,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
             amostras_osc.append(_clearance_osc_cm(pe, pd, pq)[idx])
             amostras_desl.append(_deslocamentos_osc_cm(pe, pd, pq))
             amostras_tronco.append(_tronco_agora_graus())
+            amostras_ang.append(_angulos_pernas_graus())
             cad = _clearance_cadeia_cm(qs)
             if cad is not None:
                 amostras_cad.append(cad[idx])
@@ -1807,6 +1835,12 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
                             "tronco_frente_graus": _maior_abs([a[0] for a in amostras_tronco]),
                             "tronco_lado_graus": _maior_abs([a[1] for a in amostras_tronco]),
                             "cadeia_cm": med(amostras_cad) if amostras_cad else float("nan")}
+    # Ângulo da vertical (IMU) da coxa e da canela da perna de cima e da de apoio
+    pe_cima, pe_apoio = ("ESQ", "DIR") if idx == 0 else ("DIR", "ESQ")
+    for papel, pe_k in (("cima", pe_cima), ("apoio", pe_apoio)):
+        for nome, seg in zip(("coxa", "canela"), SEGMENTOS_PERNAS[pe_k]):
+            v = [a[seg] for a in amostras_ang if seg in a]
+            detalhe_ultima_caixa[f"{nome}_{papel}_graus"] = med(v) if v else float("nan")
     print("    DESÇA o pé para o chão.")
     _aviso_sonoro(1)
     _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
@@ -2068,16 +2102,23 @@ def zerar_gravacao():
 
 
 def _testar_calibracao(altura_cm, detalhes=None):
-    """Cada pé sobe uma vez no objeto. Devolve {pé: altura medida em cm}; o diagnóstico vai para detalhes."""
+    """Cada pé sobe REPETICOES_VERIFICACAO vezes no objeto, alternando os pés.
+
+    Devolve {pé: [altura medida em cm em cada subida]}; o diagnóstico de cada subida vai para
+    detalhes[pé] (lista)."""
     medidas = {}
     detalhes = {} if detalhes is None else detalhes
     detalhes.clear()
-    for pe, lado, idx in (("ESQ", "ESQUERDO", 0), ("DIR", "DIREITO", 1)):
-        if pe not in (PES_ALTURA or ["ESQ", "DIR"]):
-            continue
-        bruto, _, _ = _medir_pe_na_caixa(lado, idx, altura_cm, objeto="objeto")
-        medidas[pe] = bruto * (ganho_esq if idx == 0 else ganho_dir)
-        detalhes[pe] = dict(detalhe_ultima_caixa)
+    n = max(1, int(REPETICOES_VERIFICACAO))
+    for rep in range(n):
+        for pe, lado, idx in (("ESQ", "ESQUERDO", 0), ("DIR", "DIREITO", 1)):
+            if pe not in (PES_ALTURA or ["ESQ", "DIR"]):
+                continue
+            if n > 1:
+                print(f"\n   --- Pé {lado}, {rep + 1}ª de {n} subidas (mesma postura em todas) ---")
+            bruto, _, _ = _medir_pe_na_caixa(lado, idx, altura_cm, objeto="objeto")
+            medidas.setdefault(pe, []).append(bruto * (ganho_esq if idx == 0 else ganho_dir))
+            detalhes.setdefault(pe, []).append(dict(detalhe_ultima_caixa))
     return medidas
 
 
@@ -2096,46 +2137,69 @@ def verificar_calibracao():
         print("=" * 90)
         detalhes = {}
         medidas = _testar_calibracao(altura, detalhes)
-        erros = {pe: m - altura for pe, m in medidas.items()}
-        tronco_ok = {pe: not _tronco_passou(d.get("tronco_frente_graus", float("nan")),
-                                            d.get("tronco_lado_graus", float("nan")))
-                     for pe, d in detalhes.items()}
-        aprovado = (bool(erros) and all(abs(e) <= TOLERANCIA_VERIFICACAO_CM for e in erros.values())
-                    and all(tronco_ok.values()))
+        erros = {pe: [m - altura for m in ms] for pe, ms in medidas.items()}
+        tronco_ok = {pe: [not _tronco_passou(d.get("tronco_frente_graus", float("nan")),
+                                             d.get("tronco_lado_graus", float("nan"))) for d in ds]
+                     for pe, ds in detalhes.items()}
+        dispersao = {pe: (max(ms) - min(ms)) if len(ms) > 1 else 0.0 for pe, ms in medidas.items()}
+        erro_ok = all(abs(e) <= TOLERANCIA_VERIFICACAO_CM for es in erros.values() for e in es)
+        repeticao_ok = all(d <= TOLERANCIA_REPETICAO_CM for d in dispersao.values())
+        todos_tronco_ok = all(all(v) for v in tronco_ok.values())
+        aprovado = bool(erros) and erro_ok and repeticao_ok and todos_tronco_ok
         tentativas.append({"altura_cm": altura,
-                           "medido_cm": {pe: round(m, 2) for pe, m in medidas.items()},
-                           "erro_cm": {pe: round(e, 2) for pe, e in erros.items()},
+                           "medido_cm": {pe: round(float(np.mean(ms)), 2) for pe, ms in medidas.items()},
+                           "erro_cm": {pe: round(float(np.mean(es)), 2) for pe, es in erros.items()},
+                           "subidas_cm": {pe: [round(m, 2) for m in ms] for pe, ms in medidas.items()},
+                           "diferenca_entre_subidas_cm": {pe: round(d, 2) for pe, d in dispersao.items()},
                            "aprovado": aprovado,
-                           "tronco_ok": tronco_ok,
-                           "detalhes": {pe: {k: round(v, 2) for k, v in d.items()} for pe, d in detalhes.items()}})
+                           "tronco_ok": {pe: all(v) for pe, v in tronco_ok.items()},
+                           "detalhes": {pe: [{k: round(v, 2) for k, v in d.items()} for d in ds]
+                                        for pe, ds in detalhes.items()}})
         print()
-        for pe, m in medidas.items():
-            marca = "✓" if abs(erros[pe]) <= TOLERANCIA_VERIFICACAO_CM and tronco_ok.get(pe, True) else "✗"
-            d = detalhes.get(pe, {})
-            fr, la = d.get("tronco_frente_graus", float("nan")), d.get("tronco_lado_graus", float("nan"))
-            txt_tr = "" if np.isnan(fr) and np.isnan(la) else f"  | tronco: frente {fr:+.0f}°, lado {la:+.0f}°"
-            if not tronco_ok.get(pe, True):
-                txt_tr += f"  << tronco inclinado (> {LIMITE_TRONCO_TESTE_GRAUS:.0f}°)"
-            print(f"    {marca} Pé {pe}: medido {m:5.1f} cm  (erro {erros[pe]:+.1f} cm){txt_tr}")
+        for pe, ms in medidas.items():
+            for k, m in enumerate(ms):
+                e = erros[pe][k]
+                tr_ok = tronco_ok.get(pe, [True] * len(ms))[k]
+                marca = "✓" if abs(e) <= TOLERANCIA_VERIFICACAO_CM and tr_ok else "✗"
+                d = detalhes.get(pe, [{}] * len(ms))[k]
+                fr, la = d.get("tronco_frente_graus", float("nan")), d.get("tronco_lado_graus", float("nan"))
+                txt_tr = "" if np.isnan(fr) and np.isnan(la) else f"  | tronco: frente {fr:+.0f}°, lado {la:+.0f}°"
+                if not tr_ok:
+                    txt_tr += f"  << tronco inclinado (> {LIMITE_TRONCO_TESTE_GRAUS:.0f}°)"
+                print(f"    {marca} Pé {pe}, {k + 1}ª subida: medido {m:5.1f} cm  (erro {e:+.1f} cm){txt_tr}")
+            if len(ms) > 1:
+                marca = "✓" if dispersao[pe] <= TOLERANCIA_REPETICAO_CM else "✗"
+                print(f"    {marca} Pé {pe}: diferença entre as subidas {dispersao[pe]:.1f} cm"
+                      f" (limite {TOLERANCIA_REPETICAO_CM:.1f} cm)")
         if detalhes:
-            print("\n    Diagnóstico (deslocamento vertical desde a calibração, com o pé no objeto):")
-            for pe, d in detalhes.items():
-                print(f"      Pé {pe} em cima: subiu {d['pe_cima_cm']:+5.1f} cm | pé de apoio {d['pe_apoio_cm']:+5.1f} cm"
-                      f" | pelve {d['pelve_cm']:+5.1f} cm | cadeia das pernas "
-                      + ("sem dados" if np.isnan(d['cadeia_cm']) else f"{d['cadeia_cm']:5.1f} cm"))
+            print("\n    Diagnóstico de cada subida (deslocamento vertical desde a calibração e ângulos da vertical):")
+            for pe, ds in detalhes.items():
+                for k, d in enumerate(ds):
+                    print(f"      Pé {pe} {k + 1}ª: subiu {d['pe_cima_cm']:+5.1f} cm | pé de apoio {d['pe_apoio_cm']:+5.1f} cm"
+                          f" | pelve {d['pelve_cm']:+5.1f} cm | cadeia das pernas "
+                          + ("sem dados" if np.isnan(d['cadeia_cm']) else f"{d['cadeia_cm']:5.1f} cm"))
+                    if not np.isnan(d.get("coxa_cima_graus", float("nan"))):
+                        print(f"             coxa de cima {d['coxa_cima_graus']:4.0f}° | canela de cima {d['canela_cima_graus']:4.0f}°"
+                              f" | coxa de apoio {d['coxa_apoio_graus']:4.0f}° | canela de apoio {d['canela_apoio_graus']:4.0f}°")
             print("      O pé de apoio e a pelve deveriam ficar perto de 0. Pé de apoio negativo = ele 'afunda'")
             print("      no SlimeVR (erro na perna de apoio); pé de cima alto com apoio em 0 = erro na perna que sobe.")
+            print("      Ângulo da coxa de cima diferente do nivelador do celular (> 3°) = tracker da coxa mal alinhado.")
         if aprovado:
             print(f"\n  [✓] Calibração aprovada na {len(tentativas)}ª tentativa.")
             print("=" * 90)
             break
         _aviso_sonoro(2)
-        if not all(tronco_ok.values()):
+        if not repeticao_ok:
+            print(f"\n  [✗] As subidas do mesmo pé diferiram mais de {TOLERANCIA_REPETICAO_CM:.1f} cm.")
+            print("      A postura de subida mudou entre as subidas. Repita com a mesma postura: pés na largura")
+            print("      do quadril, pé que sobe só um pouco à frente, perna de apoio esticada, tronco reto,")
+            print("      pé inteiro apoiado no objeto. Compare os ângulos da coxa entre as subidas.")
+        if not todos_tronco_ok:
             print(f"\n  [✗] O tronco inclinou mais de {LIMITE_TRONCO_TESTE_GRAUS:.0f}° com o pé no objeto.")
             print("      Suba mantendo o tronco reto e o quadril nivelado (mãos na cintura ou apoio numa barra).")
             print("      Se a pessoa estava reta e mesmo assim aparece inclinação, a montagem do peito/quadril")
             print("      no SlimeVR está errada: refaça a Calibração de Montagem (Corpo) e o Redefinir Tudo.")
-        print(f"\n  [✗] Erro acima de {TOLERANCIA_VERIFICACAO_CM:.1f} cm ou tronco inclinado. Refaça a calibração do SlimeVR:")
+        print(f"\n  [✗] Erro acima de {TOLERANCIA_VERIFICACAO_CM:.1f} cm, subidas diferentes ou tronco inclinado. Refaça a calibração do SlimeVR:")
         print("      1. Confira se as faixas estão firmes e os trackers não giraram.")
         print("      2. No SlimeVR, faça o Reset mounting e depois o Full reset (em pé, reto).")
         print("      3. Volte aqui com os dois pés no chão.")
