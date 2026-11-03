@@ -26,6 +26,7 @@ print("  📡 Abrindo portas OSC/VMC e conectando SolarXR...", flush=True)
 print("=" * 75 + "\n", flush=True)
 
 import csv
+import json
 import os
 import time
 import math
@@ -2122,6 +2123,16 @@ def _testar_calibracao(altura_cm, detalhes=None):
     return medidas
 
 
+def _salvar_verificacao(tentativas):
+    """Grava as tentativas da conferência na pasta da coleta na hora (fica salvo mesmo com Ctrl+C)."""
+    try:
+        os.makedirs(PASTA_COLETA, exist_ok=True)
+        with open(os.path.join(PASTA_COLETA, "verificacao_calibracao.json"), "w", encoding="utf-8") as f:
+            json.dump(tentativas, f, ensure_ascii=False, indent=2, default=float)
+    except Exception as e:
+        print(f"[Aviso] Não foi possível salvar a conferência: {e}")
+
+
 def verificar_calibracao():
     """
     Teste rápido antes do roteiro: o pé sobe no objeto de altura conhecida e o programa
@@ -2155,6 +2166,7 @@ def verificar_calibracao():
                            "tronco_ok": {pe: all(v) for pe, v in tronco_ok.items()},
                            "detalhes": {pe: [{k: round(v, 2) for k, v in d.items()} for d in ds]
                                         for pe, ds in detalhes.items()}})
+        _salvar_verificacao(tentativas)
         print()
         for pe, ms in medidas.items():
             for k, m in enumerate(ms):
