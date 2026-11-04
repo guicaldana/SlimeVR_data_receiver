@@ -123,6 +123,10 @@ ALTURAS_CALIBRACAO_CM = [ALTURA_CAIXA_CM]
 TEMPO_CAIXA_S = 3.0      # segundos de amostragem com o pé na caixa
 TEMPO_TRANSICAO_CALIB_S = 3   # calibração: segundos para subir e para descer o pé da caixa
 TEMPO_VIRAR_CAIXA_S = 10      # calibração com várias alturas: segundos para virar a caixa
+# Instrução e tempo próprios para uma altura da caixa (índice em ALTURAS_CALIBRACAO_CM), por exemplo
+# a pilha de duas caixas; sem entrada, o programa pede para virar a caixa em TEMPO_VIRAR_CAIXA_S.
+INSTRUCOES_CAIXA = {}          # {indice: "texto"}
+TEMPO_MONTAR_CAIXA_S = {}      # {indice: segundos}
 
 # Teste rápido da calibração antes do roteiro: cada pé sobe num objeto de altura conhecida
 # por TEMPO_CAIXA_S e o programa mostra a altura medida. Se o erro de algum pé passar de
@@ -355,7 +359,7 @@ detalhe_ultima_caixa = {}        # diagnóstico da última medida com o pé no o
 pontos_calibracao = {}           # {"osc": [pts_E, pts_D], ...} com (medido_cm, real_cm) da caixa
 # Avisa quando a razão real/medido de uma altura da caixa difere da outra em mais que isso (1.25 = 25%)
 LIMITE_DIVERGENCIA_CALIB = 1.25
-# Caixa com duas alturas: a correção (real = a + b x medido) é recusada e a caixa é repetida
+# Caixa com duas ou mais alturas: a correção (real = a + b x medido) é recusada e a caixa é repetida
 # quando a inclinação b sai desta faixa (04/11: uma subida torta deu b = 1,39 e 0,74 no pé D
 # e errou o objeto de 7 cm em 1,5 a 2,3 cm). Só os métodos listados são conferidos: a cadeia
 # varia muito na caixa e a aprovação da conferência usa o OSC.
@@ -2096,9 +2100,14 @@ def calibrar_ganho_caixa():
             if len(alturas) > 1:
                 print(f"\n   --- Caixa de {h:.1f} cm ---")
                 if k > 0:
-                    print(f"    VIRE a caixa para ficar com {h:.1f} cm de altura.")
-                    _aviso_sonoro(1)
-                    _contagem("Virando a caixa:", TEMPO_VIRAR_CAIXA_S)
+                    if k in INSTRUCOES_CAIXA:
+                        print(f"    {INSTRUCOES_CAIXA[k]}")
+                        _aviso_sonoro(1)
+                        _contagem("Montando a caixa:", TEMPO_MONTAR_CAIXA_S.get(k, TEMPO_VIRAR_CAIXA_S))
+                    else:
+                        print(f"    VIRE a caixa para ficar com {h:.1f} cm de altura.")
+                        _aviso_sonoro(1)
+                        _contagem("Virando a caixa:", TEMPO_VIRAR_CAIXA_S)
             for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
                 _, m_osc, m_cad = _medir_pe_na_caixa(lado, idx, h)
                 subidas_caixa.append((("ESQ", "DIR")[idx], h, dict(detalhe_ultima_caixa)))
@@ -2132,7 +2141,7 @@ def calibrar_ganho_caixa():
                     b = (curva[-1][1] - curva[-2][1]) / max(1e-6, curva[-1][0] - curva[-2][0])
                     a = curva[-1][1] - b * curva[-1][0]
                     print(f"    Correção {metodo} pé {lado}: real = {a:+.1f} cm + {b:.2f} x medido")
-                    # inclinação longe de 1 = as duas alturas da caixa não concordam
+                    # inclinação longe de 1 = as alturas da caixa não concordam
                     if (pe_usado and metodo in METODOS_CONFERIR_CAIXA
                             and not FAIXA_INCLINACAO_CAIXA[0] <= b <= FAIXA_INCLINACAO_CAIXA[1]):
                         inconsistentes.append(f"{metodo} pé {lado}: {b:.2f} x medido, fora de "
@@ -2155,7 +2164,7 @@ def calibrar_ganho_caixa():
                     print(f"      caixa {h:.1f} cm, pé {pe_c[0]}: cadeia ajustada {v:.1f} cm"
                           f" (pelve lado {d.get('pelve_lado_graus', 0.0):+.0f}°)")
         if inconsistentes:
-            print("\n    [✗] Correção recusada: as duas alturas da caixa não concordam entre si:")
+            print("\n    [✗] Correção recusada: as alturas da caixa não concordam entre si:")
             for txt in inconsistentes:
                 print(f"      - {txt}")
             print("    Provável subida torta. Repita com a mesma postura da conferência: pé inteiro")
