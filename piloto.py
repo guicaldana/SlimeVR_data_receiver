@@ -350,6 +350,12 @@ detalhe_ultima_caixa = {}        # diagnóstico da última medida com o pé no o
 pontos_calibracao = {}           # {"osc": [pts_E, pts_D], ...} com (medido_cm, real_cm) da caixa
 # Avisa quando a razão real/medido de uma altura da caixa difere da outra em mais que isso (1.25 = 25%)
 LIMITE_DIVERGENCIA_CALIB = 1.25
+# Caixa com duas alturas: a correção (real = a + b x medido) é recusada e a caixa é repetida
+# quando a inclinação b sai desta faixa (04/11: uma subida torta deu b = 1,39 e 0,74 no pé D
+# e errou o objeto de 7 cm em 1,5 a 2,3 cm). Só os métodos listados são conferidos: a cadeia
+# varia muito na caixa e a aprovação da conferência usa o OSC.
+FAIXA_INCLINACAO_CAIXA = (0.8, 1.25)
+METODOS_CONFERIR_CAIXA = ("osc",)
 
 
 def curva_reta_caixa(pts):
@@ -1955,24 +1961,28 @@ def calibrar_ganho_caixa():
                     a = curva[-1][1] - b * curva[-1][0]
                     print(f"    Correção {metodo} pé {lado}: real = {a:+.1f} cm + {b:.2f} x medido")
                     # inclinação longe de 1 = as duas alturas da caixa não concordam
-                    if pe_usado and not (1 / LIMITE_DIVERGENCIA_CALIB ** 2 <= b <= LIMITE_DIVERGENCIA_CALIB ** 2):
-                        inconsistentes.append(f"{metodo} pé {lado} (" + ", ".join(
+                    if (pe_usado and metodo in METODOS_CONFERIR_CAIXA
+                            and not FAIXA_INCLINACAO_CAIXA[0] <= b <= FAIXA_INCLINACAO_CAIXA[1]):
+                        inconsistentes.append(f"{metodo} pé {lado}: {b:.2f} x medido, fora de "
+                                              f"{FAIXA_INCLINACAO_CAIXA[0]:.2f}-{FAIXA_INCLINACAO_CAIXA[1]:.2f} (" + ", ".join(
                             f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
                 else:
-                    if pe_usado and len(pts) > 1:
+                    if pe_usado and len(pts) > 1 and metodo in METODOS_CONFERIR_CAIXA:
                         inconsistentes.append(f"{metodo} pé {lado} (" + ", ".join(
                             f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
                     print(f"    Ganho {metodo} pé {lado}: {g[-1]:.3f}")
             ganhos_metodo[metodo] = tuple(g)
         if inconsistentes:
-            print("\n    [Aviso] As alturas da caixa não concordam entre si:")
+            print("\n    [✗] Correção recusada: as duas alturas da caixa não concordam entre si:")
             for txt in inconsistentes:
                 print(f"      - {txt}")
-            print("    Confira se o pé ficou todo apoiado e se a caixa estava virada na altura certa.")
+            print("    Provável subida torta. Repita com a mesma postura da conferência: pé inteiro")
+            print("    apoiado, tronco reto e quadril nivelado; confira a caixa virada na altura certa.")
             _aviso_sonoro(2)
-            resp = input("    Repetir a calibração da caixa? [S/n]: ").strip().lower()
-            if resp in ("", "s", "sim"):
+            resp = input("    [Enter] repetir a caixa | [c] seguir com esta correção: ").strip().lower()
+            if resp not in ("c", "continuar"):
                 return calibrar_ganho_caixa()
+            print("    [Aviso] Seguindo com a correção recusada.")
         ganho_esq, ganho_dir = 1.0, 1.0
         print("=" * 90)
         return

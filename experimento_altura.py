@@ -38,6 +38,9 @@ piloto.ALTURAS_CALIBRACAO_CM = [9.4, 14.5]
 piloto.VERIFICAR_CALIBRACAO = True
 piloto.ALTURA_VERIFICACAO_CM = 7.0
 piloto.TOLERANCIA_VERIFICACAO_CM = 1.0
+# Inclinação máxima do tronco (frente ou lado) com o pé no objeto na conferência. 04/11: com 5°
+# a conferência reprovava subidas com a altura certa (quadril inclinando 5-7° ao subir o pé E).
+piloto.LIMITE_TRONCO_TESTE_GRAUS = 8.0
 # Teste da calibração e caixa: 5 s para subir e para descer o pé (o padrão do piloto é 3 s)
 piloto.TEMPO_TRANSICAO_CALIB_S = 5
 piloto.ROTEIRO = piloto.montar_roteiro()
