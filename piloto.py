@@ -393,6 +393,93 @@ def aplicar_calibracao(valor, metodo, idx):
     incl = float(np.clip((ys[-1] - ys[-2]) / max(1e-6, xs[-1] - xs[-2]), 0.4, 2.5))
     out = np.where(v > xs[-1], ys[-1] + (v - xs[-1]) * incl, out)
     return float(out) if np.ndim(out) == 0 else out
+# ---- Cadeia ajustada (04/11): ângulos da coxa e da canela + inclinação lateral da pelve ----
+# Altura que cada perna "sobe" ao dobrar: k*[Lcoxa*(cos d - cos(coxa + d)) + Lcanela*(1 - cos canela)],
+# com k (escala dos comprimentos) e d (desvio do tracker da coxa em relação ao osso, graus)
+# ajustados por perna nas subidas da caixa. A pelve entra pela inclinação lateral do tracker
+# do quadril: o lado que sobe leva o pé daquele lado junto (largura entre as articulações).
+CADEIA_AJUSTADA = True
+cadeia_aj_params = {"ESQ": (1.0, 0.0), "DIR": (1.0, 0.0)}   # (k, d em graus)
+largura_quadril_m = None         # distância entre os joelhos na calibração (≈ entre as articulações)
+serie_roll_quadril = {"t": [], "roll": []}   # inclinação lateral do quadril (graus) para o relatório
+CADEIA_AJ_K = (0.7, 1.4)
+CADEIA_AJ_D = (-20.0, 20.0)
+
+
+def _subida_perna(pe, coxa_graus, canela_graus, params=None):
+    """Quanto o tornozelo da perna sobe (cm) pela flexão da coxa e da canela."""
+    if cadeia is None:
+        return float("nan")
+    k, d = (params or cadeia_aj_params)[pe]
+    segs = SEGMENTOS_PERNAS[pe]
+    lt = cadeia.comprimentos[segs[0]] * 100.0
+    ls = cadeia.comprimentos[segs[1]] * 100.0
+    rd = np.radians
+    return k * (lt * (np.cos(rd(d)) - np.cos(rd(np.asarray(coxa_graus) + d)))
+                + ls * (1.0 - np.cos(rd(np.asarray(canela_graus)))))
+
+
+def _pelve_cm(lado_graus):
+    """Quanto o quadril DIR fica acima do ESQ (cm) pela inclinação lateral (positivo = DIR mais alto)."""
+    if not largura_quadril_m:
+        return 0.0
+    return largura_quadril_m * 100.0 * np.sin(np.radians(np.nan_to_num(np.asarray(lado_graus, dtype=float))))
+
+
+def alturas_cadeia_ajustada(ang, lado_graus, params=None):
+    """(E, D) em cm pela cadeia ajustada. ang: {segmento: graus da vertical} (escalares ou arrays)."""
+    if cadeia is None or any(seg not in ang for segs in SEGMENTOS_PERNAS.values() for seg in segs):
+        return None
+    se = _subida_perna("ESQ", ang[SEGMENTOS_PERNAS["ESQ"][0]], ang[SEGMENTOS_PERNAS["ESQ"][1]], params)
+    sd = _subida_perna("DIR", ang[SEGMENTOS_PERNAS["DIR"][0]], ang[SEGMENTOS_PERNAS["DIR"][1]], params)
+    dif = sd - se + _pelve_cm(lado_graus)   # pé DIR menos pé ESQ
+    return np.maximum(0.0, -dif), np.maximum(0.0, dif)
+
+
+def ajustar_cadeia_pela_caixa(subidas):
+    """Ajusta (k, d) de cada perna nas subidas da caixa.
+
+    subidas: [(pe_cima, altura_real_cm, detalhe)], detalhe com os ângulos de cima e de apoio
+    e a inclinação lateral da pelve. Sem duas alturas por perna, fica (1, 0)."""
+    params = {"ESQ": (1.0, 0.0), "DIR": (1.0, 0.0)}
+    if cadeia is None:
+        return params
+    deltas = np.arange(CADEIA_AJ_D[0], CADEIA_AJ_D[1] + 1e-9, 0.25)
+    for _ in range(3):   # a perna de apoio usa os parâmetros da outra: repete até estabilizar
+        novos = dict(params)
+        for pe in ("ESQ", "DIR"):
+            outro = "DIR" if pe == "ESQ" else "ESQ"
+            pts = []
+            for p, h, d in subidas:
+                if p != pe:
+                    continue
+                v = [d.get(c, float("nan")) for c in ("coxa_cima_graus", "canela_cima_graus",
+                                                       "coxa_apoio_graus", "canela_apoio_graus")]
+                if any(np.isnan(v)):
+                    continue
+                apoio = float(_subida_perna(outro, v[2], v[3], params))
+                pelve = float(_pelve_cm(d.get("pelve_lado_graus", 0.0)))
+                # altura do pé de cima = subida(cima) - subida(apoio) -/+ pelve
+                alvo = h + apoio + (pelve if pe == "ESQ" else -pelve)
+                pts.append((v[0], v[1], alvo))
+            if len({round(a, 1) for _, _, a in pts}) < 2:
+                continue
+            melhor = None
+            for dl in deltas:
+                g = np.array([float(_subida_perna(pe, c, cn, {pe: (1.0, dl)})) for c, cn, _ in pts])
+                y = np.array([a for _, _, a in pts])
+                if np.dot(g, g) <= 0:
+                    continue
+                k = float(np.clip(np.dot(g, y) / np.dot(g, g), *CADEIA_AJ_K))
+                res = float(np.sum((k * g - y) ** 2)) + 1e-4 * abs(dl)
+                if melhor is None or res < melhor[0]:
+                    melhor = (res, k, float(dl))
+            if melhor:
+                novos[pe] = (melhor[1], melhor[2])
+        params = novos
+    return params
+
+
 L_coxa_pe_e_ref = 0.0          # Comprimento de repouso Coxa-Pé Esquerdo (desacoplamento pélvico)
 L_coxa_pe_d_ref = 0.0          # Comprimento de repouso Coxa-Pé Direito (desacoplamento pélvico)
 limiar_ruido_chao = 1.0         # cm (zona morta contra tremor e ruído dos sensores no chão)
@@ -531,6 +618,8 @@ def osc_handler_9000(address, *args):
             elif tracker_id == TRACKER_QUADRIL:
                 pitch, yaw = extrair_pitch_e_yaw(args)
                 roll_atual[TRACKER_QUADRIL] = extrair_roll(args)
+                serie_roll_quadril["t"].append(t_rel)
+                serie_roll_quadril["roll"].append(roll_atual[TRACKER_QUADRIL])
                 dados[TRACKER_QUADRIL]["pitch"].append(pitch)
                 dados[TRACKER_QUADRIL]["yaw"].append(yaw)
                 rot_atual[TRACKER_QUADRIL] = (pitch, yaw)
@@ -834,6 +923,34 @@ def alturas_cadeia_serie(t_comum, taxa_amostragem):
     return e * 100.0, d * 100.0
 
 
+def alturas_cadeia_aj_serie(t_comum, taxa_amostragem):
+    """Série (E, D) em cm pela cadeia ajustada, ou (None, None)."""
+    if not CADEIA_AJUSTADA or cadeia is None or not getattr(cadeia, "calibrado", False):
+        return None, None
+    series = {}
+    for seg in cadeia_pernas.SEGMENTOS:
+        d = dados_quat[seg]
+        if len(d["t"]) < 10:
+            return None, None
+        series[seg] = (np.array(d["t"]), np.array(d["q"]))
+    qs = cadeia_pernas.quats_em(series, t_comum)
+    ang = {}
+    for seg in cadeia_pernas.SEGMENTOS:
+        v = cadeia.vetor(seg, qs[seg])
+        ang[seg] = np.degrees(np.arccos(np.clip(-v[:, 1] / np.linalg.norm(v, axis=1), -1, 1)))
+    rt, rr = np.asarray(serie_roll_quadril["t"]), np.asarray(serie_roll_quadril["roll"])
+    n = min(len(rt), len(rr))
+    if n > 10:
+        lado = np.array([_dif_angulo(r, roll_ref[TRACKER_QUADRIL]) for r in rr[:n]])
+        lado = np.interp(t_comum, rt[:n], lado)
+    else:
+        lado = np.zeros_like(t_comum)
+    aj = alturas_cadeia_ajustada(ang, lado)
+    if aj is None:
+        return None, None
+    return aplicar_filtro(aj[0], 5.0, taxa_amostragem), aplicar_filtro(aj[1], 5.0, taxa_amostragem)
+
+
 def _picos_balanco(x, minimo=1.5, fim=0.5):
     """Altura máxima de cada balanço (trecho em que o pé sai do chão)."""
     picos, i, n = [], 0, len(x)
@@ -997,8 +1114,10 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
         escalar_cadeia_pela_marcha(t_comum, osc_e_bruto, osc_d_bruto, cad_e, cad_d, pitch_serie)
     clearance_esq, clearance_dir = combinar_alturas(clearance_esq, clearance_dir, cad_e, cad_d, pitch_serie)
     serie_altura.clear()
+    aj_e, aj_d = alturas_cadeia_aj_serie(t_comum, taxa_amostragem)
     serie_altura.update({
         "t": t_comum, "osc_esq_cm": osc_e_bruto, "osc_dir_cm": osc_d_bruto,
+        "cadeia_aj_esq_cm": aj_e, "cadeia_aj_dir_cm": aj_d,
         "cadeia_esq_cm": cad_e, "cadeia_dir_cm": cad_d, "tronco_graus": pitch_serie,
         "peso_cadeia": (peso_cadeia(pitch_serie) * np.ones_like(t_comum)
                         if MODO_ALTURA == "pipeline" and cad_e is not None else None),
@@ -1768,7 +1887,19 @@ def _alturas_metodos_agora_cm():
     cad = _clearance_cadeia_cm(qs)
     if cad is not None:
         res["cadeia"] = tuple(zm(aplicar_calibracao(cad[i], "cadeia", i)) for i in (0, 1))
+    res["cadeia_aj"] = None
+    if CADEIA_AJUSTADA:
+        aj = alturas_cadeia_ajustada(_angulos_pernas_graus(), _pelve_lado_agora_graus())
+        if aj is not None:
+            res["cadeia_aj"] = tuple(zm(float(v)) for v in aj)
     return res
+
+
+def _pelve_lado_agora_graus():
+    """Inclinação lateral do tracker do quadril em relação à calibração (graus), 0 sem dados."""
+    with lock:
+        r = roll_atual.get(TRACKER_QUADRIL)
+    return 0.0 if r is None else float(_dif_angulo(r, roll_ref[TRACKER_QUADRIL]))
 
 
 def _tronco_agora_graus():
@@ -1800,6 +1931,9 @@ def _texto_altura():
             o, c = alt["osc"], alt["cadeia"]
             txt = f" | OSC E={o[0]:4.1f} D={o[1]:4.1f}"
             txt += " | Cadeia sem dados" if c is None else f" | Cadeia E={c[0]:4.1f} D={c[1]:4.1f}"
+            a = alt.get("cadeia_aj")
+            if a is not None:
+                txt += f" | Cad.aj E={a[0]:4.1f} D={a[1]:4.1f}"
     else:
         alt = _altura_agora_cm()
         txt = " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
@@ -1842,6 +1976,19 @@ def _angulos_pernas_graus():
     return ang
 
 
+def _cadeia_aj_da_subida(d, idx, params=None):
+    """Altura (cm) do pé de cima pela cadeia ajustada, com os ângulos medianos de uma subida."""
+    pe_cima, pe_apoio = ("ESQ", "DIR") if idx == 0 else ("DIR", "ESQ")
+    ang = {}
+    for papel, pe in (("cima", pe_cima), ("apoio", pe_apoio)):
+        for nome, seg in zip(("coxa", "canela"), SEGMENTOS_PERNAS[pe]):
+            ang[seg] = d.get(f"{nome}_{papel}_graus", float("nan"))
+    if any(np.isnan(v) for v in ang.values()):
+        return float("nan")
+    aj = alturas_cadeia_ajustada(ang, d.get("pelve_lado_graus", 0.0), params)
+    return float("nan") if aj is None else float(aj[idx])
+
+
 def _maior_abs(valores):
     """Valor de maior módulo (com sinal), ignorando NaN; NaN se não houver valores."""
     v = np.asarray(valores, dtype=float)
@@ -1860,6 +2007,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     global detalhe_ultima_caixa
     amostras, amostras_osc, amostras_cad, amostras_desl, amostras_tronco = [], [], [], [], []
     amostras_ang = []
+    amostras_pelve = []
     t_fim = time.time() + TEMPO_CAIXA_S
     ultimo_print = 0.0
     while time.time() < t_fim and rodando:
@@ -1874,6 +2022,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
             amostras_desl.append(_deslocamentos_osc_cm(pe, pd, pq))
             amostras_tronco.append(_tronco_agora_graus())
             amostras_ang.append(_angulos_pernas_graus())
+            amostras_pelve.append(_pelve_lado_agora_graus())
             cad = _clearance_cadeia_cm(qs)
             if cad is not None:
                 amostras_cad.append(cad[idx])
@@ -1895,6 +2044,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     detalhe_ultima_caixa["osc_bruto_cm"] = med(amostras_osc) if amostras_osc else float("nan")
     detalhe_ultima_caixa["osc_corrigido_cm"] = (float(aplicar_calibracao(med(amostras_osc), "osc", idx))
                                                 if amostras_osc else float("nan"))
+    detalhe_ultima_caixa["pelve_lado_graus"] = med(amostras_pelve) if amostras_pelve else 0.0
     detalhe_ultima_caixa["cadeia_corrigido_cm"] = (float(aplicar_calibracao(med(amostras_cad), "cadeia", idx))
                                                    if amostras_cad else float("nan"))
     # Ângulo da vertical (IMU) da coxa e da canela da perna de cima e da de apoio
@@ -1903,6 +2053,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
         for nome, seg in zip(("coxa", "canela"), SEGMENTOS_PERNAS[pe_k]):
             v = [a[seg] for a in amostras_ang if seg in a]
             detalhe_ultima_caixa[f"{nome}_{papel}_graus"] = med(v) if v else float("nan")
+    detalhe_ultima_caixa["cadeia_aj_corrigido_cm"] = _cadeia_aj_da_subida(detalhe_ultima_caixa, idx)
     print("    DESÇA o pé para o chão.")
     _aviso_sonoro(1)
     _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
@@ -1912,7 +2063,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
 
 def calibrar_ganho_caixa():
     """Pede para pisar na caixa com cada pé (em uma ou mais alturas) e calcula a correção por pé."""
-    global ganho_esq, ganho_dir, ganhos_metodo, curvas_metodo, pontos_calibracao
+    global ganho_esq, ganho_dir, ganhos_metodo, curvas_metodo, pontos_calibracao, cadeia_aj_params
     alturas = list(ALTURAS_CALIBRACAO_CM or [ALTURA_CAIXA_CM])
     print("\n" + "=" * 90)
     print("   📦 ETAPA 2: CALIBRAÇÃO DE ALTURA COM A CAIXA: "
@@ -1921,6 +2072,7 @@ def calibrar_ganho_caixa():
 
     if MODO_ALTURA == "pipeline":
         pontos = {m: [[(0.0, 0.0)], [(0.0, 0.0)]] for m in ("osc", "cadeia")}
+        subidas_caixa = []   # para ajustar a cadeia ajustada (ângulos de cada subida)
         for k, h in enumerate(alturas):
             if len(alturas) > 1:
                 print(f"\n   --- Caixa de {h:.1f} cm ---")
@@ -1930,6 +2082,7 @@ def calibrar_ganho_caixa():
                     _contagem("Virando a caixa:", TEMPO_VIRAR_CAIXA_S)
             for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
                 _, m_osc, m_cad = _medir_pe_na_caixa(lado, idx, h)
+                subidas_caixa.append((("ESQ", "DIR")[idx], h, dict(detalhe_ultima_caixa)))
                 for metodo, med in (("osc", m_osc), ("cadeia", m_cad)):
                     if med >= 2.0:
                         pontos[metodo][idx].append((med, h))
@@ -1972,6 +2125,16 @@ def calibrar_ganho_caixa():
                             f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
                     print(f"    Ganho {metodo} pé {lado}: {g[-1]:.3f}")
             ganhos_metodo[metodo] = tuple(g)
+        if CADEIA_AJUSTADA and cadeia is not None:
+            cadeia_aj_params = ajustar_cadeia_pela_caixa(subidas_caixa)
+            for pe in ("ESQ", "DIR"):
+                k, dl = cadeia_aj_params[pe]
+                print(f"    Cadeia ajustada pé {pe[0]}: comprimentos x {k:.2f}, desvio da coxa {dl:+.1f}°")
+            for pe_c, h, d in subidas_caixa:
+                v = _cadeia_aj_da_subida(d, 0 if pe_c == "ESQ" else 1)
+                if not np.isnan(v):
+                    print(f"      caixa {h:.1f} cm, pé {pe_c[0]}: cadeia ajustada {v:.1f} cm"
+                          f" (pelve lado {d.get('pelve_lado_graus', 0.0):+.0f}°)")
         if inconsistentes:
             print("\n    [✗] Correção recusada: as duas alturas da caixa não concordam entre si:")
             for txt in inconsistentes:
@@ -2015,6 +2178,10 @@ def calibrar_cadeia(amostras_pos, amostras_quat):
     if all(len(v) >= 10 for v in amostras_pos.values()):
         med = {k: np.median(np.array(v), axis=0) for k, v in amostras_pos.items()}
         comp = cadeia_pernas.comprimentos_de_osc(med["quad"], med["joelho_e"], med["joelho_d"], med["pe_e"], med["pe_d"])
+        global largura_quadril_m
+        lat = np.asarray(med["joelho_d"], dtype=float) - np.asarray(med["joelho_e"], dtype=float)
+        lat[cadeia_pernas.EIXO_VERTICAL] = 0.0
+        largura_quadril_m = float(np.linalg.norm(lat)) or None
     nova = cadeia_pernas.CadeiaPernas(comp)
     nova.calibrar(amostras_quat)
     c = nova.comprimentos
@@ -2177,6 +2344,7 @@ def zerar_gravacao():
             dados_imu[l] = {k: [] for k in dados_imu[l]}
         for seg in dados_quat:
             dados_quat[seg] = {"t": [], "q": []}
+        serie_roll_quadril["t"], serie_roll_quadril["roll"] = [], []
         tempo_inicial = time.time()
 
 
@@ -2242,7 +2410,7 @@ def verificar_calibracao():
                            "diferenca_entre_subidas_cm": {pe: round(d, 2) for pe, d in dispersao.items()},
                            "aprovado": aprovado,
                            "por_metodo_cm": {pe: {mt: [round(d.get(f"{mt}_corrigido_cm", float("nan")), 2) for d in ds]
-                                                  for mt in ("osc", "cadeia")} for pe, ds in detalhes.items()},
+                                                  for mt in ("osc", "cadeia", "cadeia_aj")} for pe, ds in detalhes.items()},
                            "tronco_ok": {pe: all(v) for pe, v in tronco_ok.items()},
                            "detalhes": {pe: [{k: round(v, 2) for k, v in d.items()} for d in ds]
                                         for pe, ds in detalhes.items()}})
@@ -2263,7 +2431,11 @@ def verificar_calibracao():
                     oc, cc = d.get("osc_corrigido_cm", float("nan")), d.get("cadeia_corrigido_cm", float("nan"))
                     txt_o = "sem dados" if np.isnan(oc) else f"{oc:5.1f} cm (erro {oc - altura:+.1f})"
                     txt_c = "sem dados" if np.isnan(cc) else f"{cc:5.1f} cm (erro {cc - altura:+.1f})"
-                    print(f"        com a correção da caixa: OSC {txt_o} | cadeia {txt_c}")
+                    txt_a = ""
+                    if CADEIA_AJUSTADA:
+                        aa = d.get("cadeia_aj_corrigido_cm", float("nan"))
+                        txt_a = " | cad. ajustada " + ("sem dados" if np.isnan(aa) else f"{aa:5.1f} cm (erro {aa - altura:+.1f})")
+                    print(f"        com a correção da caixa: OSC {txt_o} | cadeia {txt_c}{txt_a}")
             if len(ms) > 1:
                 marca = "✓" if dispersao[pe] <= TOLERANCIA_REPETICAO_CM else "✗"
                 print(f"    {marca} Pé {pe}: diferença entre as subidas {dispersao[pe]:.1f} cm"
@@ -2411,6 +2583,9 @@ def avaliar_altura_conhecida():
         if s.get(ce) is not None and s.get(cd) is not None:
             por_metodo[metodo] = (np.asarray(aplicar_calibracao(np.asarray(s[ce], dtype=float), metodo, 0)),
                                   np.asarray(aplicar_calibracao(np.asarray(s[cd], dtype=float), metodo, 1)))
+    # Cadeia ajustada (ângulos + pelve, com os parâmetros da caixa)
+    if CADEIA_AJUSTADA and s.get("cadeia_aj_esq_cm") is not None:
+        por_metodo["cadeia_aj"] = (np.asarray(s["cadeia_aj_esq_cm"]), np.asarray(s["cadeia_aj_dir_cm"]))
     # Os mesmos métodos sem calibração, para ver se a correção da caixa ajuda
     for metodo, ce, cd in (("osc", "osc_esq_cm", "osc_dir_cm"), ("cadeia", "cadeia_esq_cm", "cadeia_dir_cm")):
         if metodo in por_metodo and CALIBRAR_CAIXA:
@@ -2442,7 +2617,7 @@ def avaliar_altura_conhecida():
         if MODO_ALTURA == "pipeline":
             # os dois métodos, cada um com a sua correção da caixa
             txt_m = "".join(f" | {mt} {extra[(i, mt)]:5.1f} ({extra[(i, mt)] - ref:+.1f})"
-                            for mt in ("osc", "cadeia") if (i, mt) in extra)
+                            for mt in ("osc", "cadeia", "cadeia_aj") if (i, mt) in extra)
         print(f"    objeto {ref:5.1f} cm | {rep}ª vez | tronco {tr:3.0f}° | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm){txt_m}")
     print(f"    erro absoluto médio: {np.mean([abs(l[4]) for l in linhas]):.1f} cm")
     tentativas = (PARTICIPANTE or {}).get("verificacao_calibracao") or []
@@ -2618,6 +2793,8 @@ def salvar_dados_brutos():
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
             "alturas_calibracao_cm": list(ALTURAS_CALIBRACAO_CM),
             "curvas_metodo": {k: [[list(p) for p in c] if c else None for c in v] for k, v in curvas_metodo.items()},
+            "cadeia_aj_params": {k: list(v) for k, v in cadeia_aj_params.items()},
+            "largura_quadril_m": largura_quadril_m,
             "pontos_calibracao": pontos_calibracao,
             "fases": [list(f) for f in fases_sessao],
             "ganhos_cadeia_caixa": list(ganhos_cadeia_caixa),
