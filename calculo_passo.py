@@ -142,6 +142,18 @@ PLATO_PERCENTIL = 100         # 100 = máximo do platô; 80 deixa o valor um pou
 PLATO_LIMIAR_M = 0.05         # abaixo disso os pés estão lado a lado (fora do platô)
 PLATO_DURACAO_MIN_S = 0.15
 PLATO_JUNTAR_S = 0.5          # junta platôs do mesmo pé separados por menos que isso
+# Fator do passo por pessoa (04/11): o OSC mediu o passo 12-15% maior que as marcas, com pouca
+# variação (Guilherme +4,5 cm, João +3,7 cm em 30 cm). Antes da gravação a pessoa caminha
+# sobre marcas de distância conhecida; o fator de cada pé = distância real / mediana medida.
+# Os passos dessa caminhada não entram no resultado; os outros saem multiplicados pelo fator
+# (o relatório e o CSV mostram também o valor sem o fator).
+CALIBRAR_PASSO = False
+PASSO_CALIBRACAO_CM = 30.0      # distância entre calcanhares das marcas da caminhada de calibração
+TEMPO_CALIBRACAO_PASSO_S = 30   # segundos da caminhada de calibração (ida e volta nas marcas)
+FATOR_PASSO_LIMITES = (0.6, 1.4)
+fator_passo = {"ESQ": 1.0, "DIR": 1.0}
+calibracao_passo = {}           # resumo da calibração do passo (vai para o relatório)
+comprimentos_brutos_m = None    # comprimento de cada passo sem o fator (para o CSV)
 MOSTRAR_GRAFICOS = True       # abre as janelas dos gráficos no fim (os PNG são salvos de qualquer jeito)
 PASTA_COLETA = "dados"
 PARTICIPANTE = None           # {"nome": ..., "altura_cm": ...}
@@ -1231,7 +1243,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         reais = reais_m or {}
         escritor.writerow([
             "Participante", "Altura_participante_cm", "Passo", "Etapa", "Tempo_HeelStrike_s", "Pe_Impacto",
-            "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
+            "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_sem_fator_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
             "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Outlier"
         ])
         for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p) in enumerate(zip(
@@ -1239,7 +1251,9 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         )):
             escritor.writerow([
                 nome_p, f"{altura_p:.1f}" if altura_p else "", i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
-                f"{imp_p:.2f}", f"{d_p:.3f}", f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
+                f"{imp_p:.2f}", f"{d_p:.3f}",
+                f"{comprimentos_brutos_m[i]:.3f}" if comprimentos_brutos_m is not None and i < len(comprimentos_brutos_m) else f"{d_p:.3f}",
+                f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
                 f"{reais[i]:.3f}" if i in reais else "",
                 f"{cl_p:.2f}", f"{tn_p:.2f}", f"{tr_p:.2f}", "NAO" if mascara_validos[i] else "SIM"
             ])
@@ -1830,6 +1844,92 @@ def salvar_fases():
         print(f"Não foi possível salvar as etapas: {e}")
 
 
+def caminhada_calibracao_passo():
+    """Caminhada sobre as marcas de distância conhecida, gravada como a etapa "calibracao_passo"."""
+    global PASSO_CALIBRACAO_CM
+    print("\n" + "=" * 90)
+    print("   👣 CALIBRAÇÃO DO PASSO: caminhada sobre as marcas")
+    print("=" * 90)
+    resp = input(f"    Distância entre as marcas (calcanhar a calcanhar, cm) [{PASSO_CALIBRACAO_CM:.0f}]: ").strip()
+    if resp:
+        try:
+            PASSO_CALIBRACAO_CM = float(resp.replace(",", "."))
+        except ValueError:
+            print(f"    Valor inválido, usando {PASSO_CALIBRACAO_CM:.0f} cm.")
+    print(f"    Fique parado no início das marcas. Ao bipe, CAMINHE pisando com o calcanhar em cada")
+    print(f"    marca ({PASSO_CALIBRACAO_CM:.0f} cm), tronco reto, ritmo normal. No fim das marcas, vire e volte")
+    print(f"    pisando nas marcas de novo, até o bipe final ({TEMPO_CALIBRACAO_PASSO_S:.0f} s).")
+    input("    [Enter] quando estiver no início das marcas: ")
+    _aviso_sonoro(2)
+    t0 = time.time() - tempo_inicial
+    fim = time.time() + TEMPO_CALIBRACAO_PASSO_S
+    while rodando and time.time() < fim:
+        print(f"    Caminhando nas marcas... {fim - time.time():4.0f}s   ", end="\r", flush=True)
+        time.sleep(0.2)
+    fases_sessao.append(("calibracao_passo", t0, time.time() - tempo_inicial))
+    _aviso_sonoro(3)
+    print("\n    Pronto. Agora siga a coleta normalmente.")
+    print("=" * 90)
+
+
+def aplicar_fator_passo(tempos, comprimentos, impactos, pes, projecoes):
+    """Calcula o fator de cada pé com os passos da caminhada de calibração, tira esses passos da
+    lista e multiplica os outros pelo fator. Devolve as listas novas e os comprimentos sem fator."""
+    global comprimentos_brutos_m
+    janela = [(t0, t1) for nome, t0, t1 in fases_sessao if nome == "calibracao_passo"]
+    tempos = np.asarray(tempos)
+    if not janela:
+        comprimentos_brutos_m = np.asarray(comprimentos, dtype=float).copy()
+        return tempos, comprimentos, impactos, pes, projecoes
+    t0, t1 = janela[0]
+    na_calib = (tempos >= t0) & (tempos <= t1 + 1.0)
+    comp = np.asarray(comprimentos, dtype=float)
+    real_m = PASSO_CALIBRACAO_CM / 100.0
+    calibracao_passo.clear()
+    calibracao_passo.update({"distancia_marcas_cm": PASSO_CALIBRACAO_CM, "pes": {}})
+    c_calib = comp[na_calib]
+    validos = remover_outliers(c_calib) if len(c_calib) else np.zeros(0, dtype=bool)
+    pes_calib = np.asarray(pes)[na_calib]
+    todos = c_calib[validos]
+    for pe in ("ESQ", "DIR"):
+        v = c_calib[validos & np.array([pe in str(p) for p in pes_calib], dtype=bool)]
+        fonte = v if len(v) >= 3 else todos
+        if len(fonte) >= 3:
+            f = float(np.clip(real_m / np.median(fonte), *FATOR_PASSO_LIMITES))
+        else:
+            f = 1.0
+        fator_passo[pe] = f
+        calibracao_passo["pes"][pe] = {"n_passos": int(len(v)), "mediana_medida_cm": float(np.median(fonte) * 100) if len(fonte) else float("nan"),
+                                       "fator": f, "usou_os_dois_pes": bool(len(v) < 3)}
+    fica = ~na_calib
+    comprimentos_brutos_m = comp[fica].copy()
+    fatores = np.array([fator_passo["ESQ"] if "ESQ" in str(p) else fator_passo["DIR"] for p in np.asarray(pes)[fica]])
+    comp_novo = comp[fica] * fatores
+    proj_novo = np.asarray(projecoes, dtype=float)[fica] * fatores
+    return tempos[fica], comp_novo, np.asarray(impactos)[fica], np.asarray(pes)[fica], proj_novo
+
+
+def resumo_fator_passo(pes, comprimentos):
+    """Texto do relatório: fator de cada pé e o passo médio sem e com o fator."""
+    if not calibracao_passo:
+        return
+    print(f"\n  👣 Calibração do passo (caminhada nas marcas de {calibracao_passo['distancia_marcas_cm']:.0f} cm):")
+    for pe in ("ESQ", "DIR"):
+        c = calibracao_passo["pes"].get(pe)
+        if not c:
+            continue
+        obs = " (poucos passos deste pé: usou os dois pés)" if c["usou_os_dois_pes"] else ""
+        print(f"    pé {pe}: {c['n_passos']} passos, mediana medida {c['mediana_medida_cm']:.1f} cm -> fator {c['fator']:.3f}{obs}")
+    if comprimentos_brutos_m is None or len(comprimentos) == 0:
+        return
+    print("    Passos da coleta (média, sem fator -> com fator):")
+    for pe in ("ESQ", "DIR"):
+        m = np.array([pe in str(p) for p in pes], dtype=bool)
+        if np.any(m):
+            print(f"    pé {pe}: {np.mean(comprimentos_brutos_m[m]) * 100:5.1f} cm -> {np.mean(np.asarray(comprimentos)[m]) * 100:5.1f} cm"
+                  f"  ({int(np.sum(m))} passos)")
+
+
 def comparar_com_marcas(tempos, pes, comprimentos):
     """Compara o comprimento de cada passo das caminhadas com as marcas do chão.
 
@@ -1963,6 +2063,8 @@ def main():
 
     # 3. Rotina de Calibração Estática Inicial
     executar_calibracao_inicial()
+    if CALIBRAR_PASSO and calibrado:
+        caminhada_calibracao_passo()
 
     print("\n" + "=" * 90)
     if ROTEIRO_GUIADO:
@@ -2021,6 +2123,11 @@ def processar_coleta():
             t_passo, d_passo_ap, tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap
         )
 
+    if len(tempos_impactos) > 0:
+        tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap = aplicar_fator_passo(
+            tempos_impactos, dist_impactos, impactos_ms2, pes_passos, projecoes_ap
+        )
+
     if len(dist_impactos) == 0:
         print("Nenhum passo com a amplitude configurada foi detectado.")
         return
@@ -2034,6 +2141,7 @@ def processar_coleta():
         sys.stdout = _Tee(frel, terminal)
         try:
             reais = {}
+            resumo_fator_passo(pes_passos, dist_impactos)
             try:
                 reais = comparar_com_marcas(tempos_impactos, pes_passos, dist_impactos)
             except Exception as e:

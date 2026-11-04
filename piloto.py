@@ -352,6 +352,28 @@ pontos_calibracao = {}           # {"osc": [pts_E, pts_D], ...} com (medido_cm, 
 LIMITE_DIVERGENCIA_CALIB = 1.25
 
 
+def curva_reta_caixa(pts):
+    """Curva de correção (desvio + ganho) a partir das medidas na caixa [(medido_cm, real_cm), ...].
+
+    Ajusta a reta real = a + b*medido às alturas da caixa e devolve a curva
+    [(0, 0), (m0, 3 cm), (medidas na reta)...]: o pé no chão continua em 0, perto de 3 cm a
+    curva encosta na reta e daí para cima segue a reta (desvio e ganho de cada pessoa).
+    Devolve None com menos de duas alturas diferentes ou reta absurda."""
+    pts = sorted((float(m), float(r)) for m, r in pts if m > 0)
+    if len(pts) < 2 or pts[-1][0] - pts[0][0] < 1.0:
+        return None
+    m = np.array([p[0] for p in pts])
+    r = np.array([p[1] for p in pts])
+    b, a = np.polyfit(m, r, 1)
+    if not 0.4 <= b <= 2.5:
+        return None
+    m1 = pts[0][0]
+    m0 = float(np.clip((3.0 - a) / b, 0.5, 0.9 * m1))
+    curva = [(0.0, 0.0), (m0, float(a + b * m0))]
+    curva += [(float(mi), float(a + b * mi)) for mi in m]
+    return curva
+
+
 def aplicar_calibracao(valor, metodo, idx):
     """Altura corrigida (cm) de um pé por um método: curva de calibração ou ganho único."""
     curva = (curvas_metodo.get(metodo) or [None, None])[idx]
@@ -1725,6 +1747,24 @@ def _altura_agora_cm():
     return (e if e >= limiar_ruido_chao else 0.0), (d if d >= limiar_ruido_chao else 0.0)
 
 
+def _alturas_metodos_agora_cm():
+    """{"osc": (E, D), "cadeia": (E, D) ou None} neste instante, cada um com a sua correção da caixa."""
+    with lock:
+        pe = pos_atual[TORNOZELO_ESQ]
+        pd = pos_atual[TORNOZELO_DIR]
+        pq = pos_atual[TRACKER_QUADRIL]
+        qs = dict(quat_atual)
+    if pe is None or pd is None:
+        return None
+    zm = lambda v: v if v >= limiar_ruido_chao else 0.0
+    osc = _clearance_osc_cm(pe, pd, pq)
+    res = {"osc": tuple(zm(aplicar_calibracao(osc[i], "osc", i)) for i in (0, 1)), "cadeia": None}
+    cad = _clearance_cadeia_cm(qs)
+    if cad is not None:
+        res["cadeia"] = tuple(zm(aplicar_calibracao(cad[i], "cadeia", i)) for i in (0, 1))
+    return res
+
+
 def _tronco_agora_graus():
     """(frente, lado) em graus em relação à calibração: frente pelo peito, lado pelo quadril."""
     with lock:
@@ -1746,8 +1786,17 @@ def _tronco_passou(frente, lado):
 
 
 def _texto_altura():
-    alt = _altura_agora_cm()
-    txt = " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
+    if MODO_ALTURA == "pipeline":
+        alt = _alturas_metodos_agora_cm()
+        if alt is None:
+            txt = " | Solado: aguardando os pés"
+        else:
+            o, c = alt["osc"], alt["cadeia"]
+            txt = f" | OSC E={o[0]:4.1f} D={o[1]:4.1f}"
+            txt += " | Cadeia sem dados" if c is None else f" | Cadeia E={c[0]:4.1f} D={c[1]:4.1f}"
+    else:
+        alt = _altura_agora_cm()
+        txt = " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
     frente, lado = _tronco_agora_graus()
     if not (np.isnan(frente) and np.isnan(lado)):
         aviso = " <<RETO!" if _tronco_passou(frente, lado) else ""
@@ -1836,6 +1885,12 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
                             "tronco_frente_graus": _maior_abs([a[0] for a in amostras_tronco]),
                             "tronco_lado_graus": _maior_abs([a[1] for a in amostras_tronco]),
                             "cadeia_cm": med(amostras_cad) if amostras_cad else float("nan")}
+    # Altura do pé de cima por cada método, já com a correção da caixa
+    detalhe_ultima_caixa["osc_bruto_cm"] = med(amostras_osc) if amostras_osc else float("nan")
+    detalhe_ultima_caixa["osc_corrigido_cm"] = (float(aplicar_calibracao(med(amostras_osc), "osc", idx))
+                                                if amostras_osc else float("nan"))
+    detalhe_ultima_caixa["cadeia_corrigido_cm"] = (float(aplicar_calibracao(med(amostras_cad), "cadeia", idx))
+                                                   if amostras_cad else float("nan"))
     # Ângulo da vertical (IMU) da coxa e da canela da perna de cima e da de apoio
     pe_cima, pe_apoio = ("ESQ", "DIR") if idx == 0 else ("DIR", "ESQ")
     for papel, pe_k in (("cima", pe_cima), ("apoio", pe_apoio)):
@@ -1873,11 +1928,13 @@ def calibrar_ganho_caixa():
                     if med >= 2.0:
                         pontos[metodo][idx].append((med, h))
                     print(f"    Pé {lado} ({metodo}): medido {med:.1f} cm (real {h:.1f})")
-        # Ganho por pé e método: reta passando pelo zero ajustada a todas as alturas da caixa
-        # (mínimos quadrados: g = soma(medido*real) / soma(medido^2)). Uma reta só é mais
-        # robusta que a curva com quebra quando um dos pontos sai ruim.
+        # Correção por pé e método. Com duas ou mais alturas da caixa: reta com desvio e ganho
+        # (real = a + b*medido), porque o erro de cada pessoa tem uma parte fixa (alinhamento da
+        # coxa, pelve) além da de escala; nos dados de 29/10 a reta só com ganho deixava a cadeia
+        # com 3,5 cm de erro e a reta com desvio e ganho baixou para menos de 1 cm.
+        # Com uma altura só: ganho único (reta pelo zero).
         pontos_calibracao = {m: [[list(p) for p in pontos[m][i][1:]] for i in (0, 1)] for m in pontos}
-        curvas_metodo = {}
+        curvas_metodo = {m: [None, None] for m in ("osc", "cadeia")}
         inconsistentes = []
         for metodo in ("osc", "cadeia"):
             g = []
@@ -1885,16 +1942,27 @@ def calibrar_ganho_caixa():
                 pts = pontos[metodo][idx][1:]
                 if not pts:
                     g.append(1.0)
+                    print(f"    {metodo} pé {lado}: sem medidas na caixa, sem correção")
                     continue
                 num = sum(m * r for m, r in pts)
                 den = sum(m * m for m, r in pts)
                 g.append(max(0.4, min(2.5, num / den)))
-                razoes = [r / m for m, r in pts]
                 pe_usado = ("ESQ", "DIR")[idx] in (PES_ALTURA or ["ESQ", "DIR"])
-                if pe_usado and len(razoes) > 1 and max(razoes) / min(razoes) > LIMITE_DIVERGENCIA_CALIB:
-                    inconsistentes.append(f"{metodo} pé {lado} (" + ", ".join(
-                        f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
-                print(f"    Ganho {metodo} pé {lado}: {g[-1]:.3f}")
+                curva = curva_reta_caixa(pts) if len(pts) > 1 else None
+                if curva is not None:
+                    curvas_metodo[metodo][idx] = curva
+                    b = (curva[-1][1] - curva[-2][1]) / max(1e-6, curva[-1][0] - curva[-2][0])
+                    a = curva[-1][1] - b * curva[-1][0]
+                    print(f"    Correção {metodo} pé {lado}: real = {a:+.1f} cm + {b:.2f} x medido")
+                    # inclinação longe de 1 = as duas alturas da caixa não concordam
+                    if pe_usado and not (1 / LIMITE_DIVERGENCIA_CALIB ** 2 <= b <= LIMITE_DIVERGENCIA_CALIB ** 2):
+                        inconsistentes.append(f"{metodo} pé {lado} (" + ", ".join(
+                            f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
+                else:
+                    if pe_usado and len(pts) > 1:
+                        inconsistentes.append(f"{metodo} pé {lado} (" + ", ".join(
+                            f"{r:.1f} cm medido como {m:.1f}" for m, r in pts) + ")")
+                    print(f"    Ganho {metodo} pé {lado}: {g[-1]:.3f}")
             ganhos_metodo[metodo] = tuple(g)
         if inconsistentes:
             print("\n    [Aviso] As alturas da caixa não concordam entre si:")
@@ -2163,6 +2231,8 @@ def verificar_calibracao():
                            "subidas_cm": {pe: [round(m, 2) for m in ms] for pe, ms in medidas.items()},
                            "diferenca_entre_subidas_cm": {pe: round(d, 2) for pe, d in dispersao.items()},
                            "aprovado": aprovado,
+                           "por_metodo_cm": {pe: {mt: [round(d.get(f"{mt}_corrigido_cm", float("nan")), 2) for d in ds]
+                                                  for mt in ("osc", "cadeia")} for pe, ds in detalhes.items()},
                            "tronco_ok": {pe: all(v) for pe, v in tronco_ok.items()},
                            "detalhes": {pe: [{k: round(v, 2) for k, v in d.items()} for d in ds]
                                         for pe, ds in detalhes.items()}})
@@ -2179,6 +2249,11 @@ def verificar_calibracao():
                 if not tr_ok:
                     txt_tr += f"  << tronco inclinado (> {LIMITE_TRONCO_TESTE_GRAUS:.0f}°)"
                 print(f"    {marca} Pé {pe}, {k + 1}ª subida: medido {m:5.1f} cm  (erro {e:+.1f} cm){txt_tr}")
+                if MODO_ALTURA == "pipeline":
+                    oc, cc = d.get("osc_corrigido_cm", float("nan")), d.get("cadeia_corrigido_cm", float("nan"))
+                    txt_o = "sem dados" if np.isnan(oc) else f"{oc:5.1f} cm (erro {oc - altura:+.1f})"
+                    txt_c = "sem dados" if np.isnan(cc) else f"{cc:5.1f} cm (erro {cc - altura:+.1f})"
+                    print(f"        com a correção da caixa: OSC {txt_o} | cadeia {txt_c}")
             if len(ms) > 1:
                 marca = "✓" if dispersao[pe] <= TOLERANCIA_REPETICAO_CM else "✗"
                 print(f"    {marca} Pé {pe}: diferença entre as subidas {dispersao[pe]:.1f} cm"
@@ -2352,8 +2427,13 @@ def avaliar_altura_conhecida():
     if not linhas:
         return []
     print("\n  📐 Alturas conhecidas")
-    for ref, cond, pe, medido, erro, tr, rep in linhas:
-        print(f"    objeto {ref:5.1f} cm | {rep}ª vez | tronco {tr:3.0f}° | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm)")
+    for i, (ref, cond, pe, medido, erro, tr, rep) in enumerate(linhas):
+        txt_m = ""
+        if MODO_ALTURA == "pipeline":
+            # os dois métodos, cada um com a sua correção da caixa
+            txt_m = "".join(f" | {mt} {extra[(i, mt)]:5.1f} ({extra[(i, mt)] - ref:+.1f})"
+                            for mt in ("osc", "cadeia") if (i, mt) in extra)
+        print(f"    objeto {ref:5.1f} cm | {rep}ª vez | tronco {tr:3.0f}° | pé {pe}: {medido:5.1f} cm  (erro {erro:+.1f} cm){txt_m}")
     print(f"    erro absoluto médio: {np.mean([abs(l[4]) for l in linhas]):.1f} cm")
     tentativas = (PARTICIPANTE or {}).get("verificacao_calibracao") or []
     if tentativas:
@@ -2527,7 +2607,7 @@ def salvar_dados_brutos():
             "ganho_esq": ganho_esq, "ganho_dir": ganho_dir,
             "ganhos_metodo": {k: list(v) for k, v in ganhos_metodo.items()},
             "alturas_calibracao_cm": list(ALTURAS_CALIBRACAO_CM),
-            "curvas_metodo": {k: [[list(p) for p in c] for c in v] for k, v in curvas_metodo.items()},
+            "curvas_metodo": {k: [[list(p) for p in c] if c else None for c in v] for k, v in curvas_metodo.items()},
             "pontos_calibracao": pontos_calibracao,
             "fases": [list(f) for f in fases_sessao],
             "ganhos_cadeia_caixa": list(ganhos_cadeia_caixa),
