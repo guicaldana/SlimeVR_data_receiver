@@ -1929,18 +1929,19 @@ def _texto_altura():
             txt = " | Solado: aguardando os pés"
         else:
             o, c = alt["osc"], alt["cadeia"]
-            txt = f" | OSC E={o[0]:4.1f} D={o[1]:4.1f}"
-            txt += " | Cadeia sem dados" if c is None else f" | Cadeia E={c[0]:4.1f} D={c[1]:4.1f}"
+            # Linha curta (cabe em 120 colunas): OSC, Cadeia e Cadeia ajustada, cada um "E/D" em cm
+            txt = f" | OSC {o[0]:4.1f}/{o[1]:4.1f}"
+            txt += " | Cad --" if c is None else f" | Cad {c[0]:4.1f}/{c[1]:4.1f}"
             a = alt.get("cadeia_aj")
             if a is not None:
-                txt += f" | Cad.aj E={a[0]:4.1f} D={a[1]:4.1f}"
+                txt += f" | Aj {a[0]:4.1f}/{a[1]:4.1f}"
     else:
         alt = _altura_agora_cm()
         txt = " | Solado: aguardando os pés" if alt is None else f" | Solado: E={alt[0]:4.1f}cm D={alt[1]:4.1f}cm"
     frente, lado = _tronco_agora_graus()
     if not (np.isnan(frente) and np.isnan(lado)):
-        aviso = " <<RETO!" if _tronco_passou(frente, lado) else ""
-        txt += f" | Tronco fr{frente:+3.0f}° lado{lado:+3.0f}°{aviso}"
+        aviso = " RETO!" if _tronco_passou(frente, lado) else ""
+        txt += f" | Tr fr{frente:+3.0f} la{lado:+3.0f}{aviso}"
     return txt
 
 
@@ -1952,7 +1953,7 @@ def _contagem(texto, segundos, mostrar_altura=False):
         extra = _texto_altura() if mostrar_altura else ""
         print(f"    {texto} {cont}s...{extra}   ", end="\r", flush=True)
         time.sleep(INTERVALO_FEEDBACK if mostrar_altura else 0.2)
-    print(" " * 110, end="\r")
+    print(" " * 120, end="\r")
 
 
 SEGMENTOS_PERNAS = {"ESQ": ("LEFT_UPPER_LEG", "LEFT_LOWER_LEG"),
@@ -2030,7 +2031,7 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
             ultimo_print = time.time()
             print(f"    Medindo {max(0.0, t_fim - ultimo_print):3.1f}s{_texto_altura()}   ", end="\r", flush=True)
         time.sleep(0.01)
-    print(" " * 110, end="\r")
+    print(" " * 120, end="\r")
     med = lambda a: float(np.median(a)) if a else 0.0
     # Para o diagnóstico: quanto subiu o pé de cima, quanto mexeu o de apoio, a pelve e a cadeia
     desl = np.nanmedian(np.array(amostras_desl), axis=0) if amostras_desl else [float("nan")] * 3
