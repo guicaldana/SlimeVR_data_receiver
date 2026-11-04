@@ -134,6 +134,11 @@ TOLERANCIA_VERIFICACAO_CM = 1.0
 # em relação à calibração. Acima disso, a medida do pé é reprovada (o SlimeVR passa a
 # inclinação do tronco para a altura do pé).
 LIMITE_TRONCO_TESTE_GRAUS = 5.0
+# Limites separados (04/11): ao subir o pé, inclinar o tronco para a frente é natural (8-12° nos
+# testes, com a altura certa); a inclinação para o lado é a que mexe na altura do pé. None = usa
+# LIMITE_TRONCO_TESTE_GRAUS para os dois.
+LIMITE_TRONCO_FRENTE_GRAUS = None
+LIMITE_TRONCO_LADO_GRAUS = None
 # Na mesma pessoa e no mesmo objeto, mudar a posição da perna mudou a leitura em até 6 cm
 # (01/11). Por isso cada pé sobe REPETICOES_VERIFICACAO vezes no teste, e as subidas do mesmo
 # pé não podem diferir mais que TOLERANCIA_REPETICAO_CM (postura de subida instável).
@@ -1919,7 +1924,20 @@ def _tronco_agora_graus():
 
 
 def _tronco_passou(frente, lado):
-    return max(abs(np.nan_to_num(frente)), abs(np.nan_to_num(lado))) > LIMITE_TRONCO_TESTE_GRAUS
+    lf, ll = _limites_tronco()
+    return abs(np.nan_to_num(frente)) > lf or abs(np.nan_to_num(lado)) > ll
+
+
+def _limites_tronco():
+    """(frente, lado) em graus: limites da inclinação do tronco com o pé no objeto."""
+    lf = LIMITE_TRONCO_FRENTE_GRAUS if LIMITE_TRONCO_FRENTE_GRAUS is not None else LIMITE_TRONCO_TESTE_GRAUS
+    ll = LIMITE_TRONCO_LADO_GRAUS if LIMITE_TRONCO_LADO_GRAUS is not None else LIMITE_TRONCO_TESTE_GRAUS
+    return lf, ll
+
+
+def _texto_limites_tronco():
+    lf, ll = _limites_tronco()
+    return f"frente > {lf:.0f}° ou lado > {ll:.0f}°" if lf != ll else f"> {lf:.0f}°"
 
 
 def _texto_altura():
@@ -2426,7 +2444,7 @@ def verificar_calibracao():
                 fr, la = d.get("tronco_frente_graus", float("nan")), d.get("tronco_lado_graus", float("nan"))
                 txt_tr = "" if np.isnan(fr) and np.isnan(la) else f"  | tronco: frente {fr:+.0f}°, lado {la:+.0f}°"
                 if not tr_ok:
-                    txt_tr += f"  << tronco inclinado (> {LIMITE_TRONCO_TESTE_GRAUS:.0f}°)"
+                    txt_tr += f"  << tronco inclinado ({_texto_limites_tronco()})"
                 print(f"    {marca} Pé {pe}, {k + 1}ª subida: medido {m:5.1f} cm  (erro {e:+.1f} cm){txt_tr}")
                 if MODO_ALTURA == "pipeline":
                     oc, cc = d.get("osc_corrigido_cm", float("nan")), d.get("cadeia_corrigido_cm", float("nan"))
@@ -2465,7 +2483,7 @@ def verificar_calibracao():
             print("      do quadril, pé que sobe só um pouco à frente, perna de apoio esticada, tronco reto,")
             print("      pé inteiro apoiado no objeto. Compare os ângulos da coxa entre as subidas.")
         if not todos_tronco_ok:
-            print(f"\n  [✗] O tronco inclinou mais de {LIMITE_TRONCO_TESTE_GRAUS:.0f}° com o pé no objeto.")
+            print(f"\n  [✗] O tronco inclinou com o pé no objeto ({_texto_limites_tronco()}).")
             print("      Suba mantendo o tronco reto e o quadril nivelado (mãos na cintura ou apoio numa barra).")
             print("      Se a pessoa estava reta e mesmo assim aparece inclinação, a montagem do peito/quadril")
             print("      no SlimeVR está errada: refaça a Calibração de Montagem (Corpo) e o Redefinir Tudo.")
