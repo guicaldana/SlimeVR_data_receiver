@@ -1,201 +1,232 @@
 """
-TESTE — calibração do comprimento do passo numa distância e conferência em outra.
+TESTE — calibração do comprimento do passo com pegadas de talco medidas com fita.
 
-Script à parte (não muda o experimento de comprimento). Sequência:
+Script à parte (não muda o experimento de comprimento). A referência não é a distância das
+marcas, e sim onde o pé caiu de verdade (talco na sola e fita métrica depois).
+
+Coleta:
   1. calibração estática do calculo_passo (os dois pés no chão), sem caixa;
-  2. caminhada de calibração nas marcas de 30 cm (calcanhar a calcanhar), 30 s, ida e volta:
-     dá o fator de cada pé = distância real / mediana medida;
-  3. pausa para ajustar o circuito para 40 cm: o teste só começa quando apertar Enter;
-  4. caminhada de teste nas marcas de 40 cm, 30 s, ida e volta. A gravação termina sozinha.
-Os passos da calibração não entram no resultado. O relatório mostra, para cada pé, o erro no
-40 cm sem o fator e com o fator do 30 cm, e também o contrário (fator do 40 conferido no 30),
-para ver se o resultado depende da distância usada na calibração.
+  2. caminhada de CALIBRAÇÃO (circuito de 30 cm): [Enter] começa, [Enter] termina. Uma direção só;
+  3. pausa para limpar o talco e ajustar o circuito para 40 cm;
+  4. caminhada de TESTE (circuito de 40 cm): [Enter] começa, [Enter] termina. Uma direção só.
+No fim o programa salva pegadas.csv na pasta da coleta, com um passo detectado por linha
+(caminhada, número, pé da frente, valor do sistema) e a coluna real_cm vazia.
 
-Saída em dados/debug_casa/<AAAAMMDD_HHMMSS>_calib<C>_teste<T>/ (o enviar_dados.py manda a
-mais recente pelo git): os arquivos normais do calculo_passo + teste_calibracao_passo.csv
-(um passo por linha) e teste_calibracao_passo.json (resumo).
+Depois de medir as pegadas (borda de trás do calcanhar até a borda de trás do calcanhar da
+pegada seguinte), preencha real_cm no pegadas.csv (Excel serve; vírgula ou ponto) e rode:
 
-    uv run python teste_calibracao_passo.py                  # calibra em 30, testa em 40
+    uv run python teste_calibracao_passo.py --analisar dados/debug_casa/<pasta>
+
+A análise calcula o fator de cada pé com a caminhada de calibração (mediana de real / sistema),
+aplica na de teste e mostra o erro passo a passo, por pé, sem e com o fator; também o contrário
+(fator do teste conferido na calibração). Linhas com real_cm vazio ficam fora. Resultado em
+analise_pegadas.txt e analise_pegadas.json.
+
+    uv run python teste_calibracao_passo.py                  # coleta (circuitos de 30 e 40 cm)
     uv run python teste_calibracao_passo.py --calib 30 --teste 50
 """
 import argparse
 import csv
 import json
 import os
+import sys
 import time
 
 import numpy as np
 
 import calculo_passo as cp
 
-TEMPO_TESTE_S = 30        # caminhada de teste (ida e volta nas marcas)
-NOME_ETAPA_TESTE = "teste_passo"
+ETAPA_CALIB = "calibracao_passo"
+ETAPA_TESTE = "teste_passo"
+NOME_PEGADAS = "pegadas.csv"
+FATOR_LIMITES = (0.6, 1.4)
 
 cp.PEDIR_PARTICIPANTE = False   # sem cadastro
 cp.CALIBRAR_CAIXA = False       # OSC bruto, sem ganho da caixa
-cp.CALIBRAR_PASSO = True        # caminhada de calibração do passo antes da gravação
-cp.ROTEIRO_GUIADO = False       # sem roteiro: a caminhada de teste vem logo depois da calibração do passo
+cp.CALIBRAR_PASSO = True        # faz o main chamar as caminhadas abaixo depois da calibração estática
+cp.ROTEIRO_GUIADO = False
 
+DIST_CALIB_CM = 30.0
 DIST_TESTE_CM = 40.0
-_passos_brutos = {}             # todos os passos antes do fator (preenchido no processamento)
-_aplicar_original = cp.aplicar_fator_passo
-_resumo_original = cp.resumo_fator_passo
 
 
-_calibracao_passo_original = cp.caminhada_calibracao_passo
-
-
-def _calibracao_e_teste():
-    """Calibração do passo; depois espera o Enter (circuito ajustado) e grava a caminhada de teste."""
-    _calibracao_passo_original()
+# ----------------------------- coleta -----------------------------
+def _caminhada(etapa, titulo, dist_cm):
     print("\n" + "=" * 90)
-    print(f"   🧪 TESTE: caminhada nas marcas de {DIST_TESTE_CM:.0f} cm")
+    print(f"   👣 {titulo}: circuito de {dist_cm:.0f} cm, UMA direção só")
     print("=" * 90)
-    print(f"    Ajuste o circuito para {DIST_TESTE_CM:.0f} cm entre calcanhares. A gravação continua enquanto isso,")
-    print("    mas esses movimentos não entram no resultado.")
-    print(f"    Ao bipe, CAMINHE pisando com o calcanhar em cada marca, tronco reto, ritmo normal.")
-    print(f"    No fim das marcas, vire e volte, até o bipe final ({TEMPO_TESTE_S:.0f} s).")
-    input("    [Enter] quando o circuito estiver pronto e a pessoa no início das marcas: ")
+    print("    Talco na sola, pessoa parada no início, pés juntos, tronco reto.")
+    input("    [Enter] para COMEÇAR: ")
     cp._aviso_sonoro(2)
     t0 = time.time() - cp.tempo_inicial
-    fim = time.time() + TEMPO_TESTE_S
-    while cp.rodando and time.time() < fim:
-        print(f"    Caminhando nas marcas de {DIST_TESTE_CM:.0f} cm... {fim - time.time():4.0f}s   ", end="\r", flush=True)
-        time.sleep(0.2)
-    cp.fases_sessao.append((NOME_ETAPA_TESTE, t0, time.time() - cp.tempo_inicial))
-    cp._aviso_sonoro(3)
-    print("\n    Teste concluído. Encerrando a gravação...")
+    print("    Caminhando... a pessoa para no fim, com os pés juntos.")
+    input("    [Enter] quando ela PARAR no fim: ")
+    cp.fases_sessao.append((etapa, t0, time.time() - cp.tempo_inicial))
+    cp._aviso_sonoro(1)
+
+
+def _caminhadas():
+    """Substitui a caminhada de calibração do calculo_passo pelas duas caminhadas com talco."""
+    _caminhada(ETAPA_CALIB, "CALIBRAÇÃO", DIST_CALIB_CM)
+    print(f"\n    Limpe as pegadas e ajuste o circuito para {DIST_TESTE_CM:.0f} cm. A gravação continua,")
+    print("    mas esse tempo não entra no resultado. (Fotografe/meça as pegadas antes de limpar.)")
+    _caminhada(ETAPA_TESTE, "TESTE", DIST_TESTE_CM)
+    print("\n    Caminhadas concluídas. Encerrando a gravação...")
     cp.roteiro_terminou = True   # o laço principal termina e processa a coleta
 
 
-def _aplicar_guardando(tempos, comprimentos, impactos, pes, projecoes):
-    """Guarda todos os passos sem fator (inclusive os da calibração) e segue o cálculo normal."""
-    _passos_brutos.update({"t": np.asarray(tempos, dtype=float).copy(),
-                           "comp": np.asarray(comprimentos, dtype=float).copy(),
-                           "pes": np.asarray([str(p) for p in pes])})
-    return _aplicar_original(tempos, comprimentos, impactos, pes, projecoes)
+def _sem_fator(tempos, comprimentos, impactos, pes, projecoes):
+    """Não aplica fator nominal: o fator sai depois das pegadas. Só guarda os passos."""
+    cp.comprimentos_brutos_m = np.asarray(comprimentos, dtype=float).copy()
+    _sem_fator.passos = (np.asarray(tempos, dtype=float), np.asarray(comprimentos, dtype=float),
+                         [str(p) for p in pes])
+    return tempos, comprimentos, impactos, pes, projecoes
 
 
-def _janela(nome):
-    for n, t0, t1 in cp.fases_sessao:
-        if n == nome:
-            return t0, t1
-    return None
-
-
-def _passos_da_etapa(nome):
-    """Índices dos passos da etapa, sem os outliers (mesmo critério do calculo_passo)."""
-    j = _janela(nome)
-    if j is None or not _passos_brutos:
-        return np.zeros(0, dtype=int)
-    t = _passos_brutos["t"]
-    idx = np.flatnonzero((t >= j[0]) & (t <= j[1] + 1.0))
-    if len(idx) == 0:
-        return idx
-    return idx[cp.remover_outliers(_passos_brutos["comp"][idx])]
-
-
-def _do_pe(idx, pe):
-    return idx[np.array([pe in p for p in _passos_brutos["pes"][idx]], dtype=bool)] if len(idx) else idx
-
-
-def _fatores(idx, real_cm):
-    """Fator de cada pé = real / mediana medida (com poucos passos de um pé, usa os dois)."""
-    f = {}
-    todos = _passos_brutos["comp"][idx] * 100
-    for pe in ("ESQ", "DIR"):
-        v = _passos_brutos["comp"][_do_pe(idx, pe)] * 100
-        fonte = v if len(v) >= 3 else todos
-        f[pe] = float(np.clip(real_cm / np.median(fonte), *cp.FATOR_PASSO_LIMITES)) if len(fonte) >= 3 else 1.0
-    return f
-
-
-def _erros(idx, real_cm, fatores):
-    """Para cada pé: n, média medida e erro médio / erro absoluto médio sem e com o fator."""
-    r = {}
-    for pe in ("ESQ", "DIR", "AMBOS"):
-        ii = idx if pe == "AMBOS" else _do_pe(idx, pe)
-        if len(ii) == 0:
+def _salvar_pegadas(pes, comprimentos):
+    """Escreve pegadas.csv: um passo detectado por linha, para preencher real_cm."""
+    t, comp, pp = getattr(_sem_fator, "passos", (np.zeros(0), np.zeros(0), []))
+    linhas = []
+    for etapa in (ETAPA_CALIB, ETAPA_TESTE):
+        j = [(a, b) for n, a, b in cp.fases_sessao if n == etapa]
+        if not j:
             continue
-        bruto = _passos_brutos["comp"][ii] * 100
-        f = np.array([fatores["ESQ"] if "ESQ" in p else fatores["DIR"] for p in _passos_brutos["pes"][ii]])
-        corr = bruto * f
-        r[pe] = {"n": int(len(ii)),
-                 "media_sem_cm": float(np.mean(bruto)), "erro_sem_cm": float(np.mean(bruto - real_cm)),
-                 "eam_sem_cm": float(np.mean(np.abs(bruto - real_cm))),
-                 "media_com_cm": float(np.mean(corr)), "erro_com_cm": float(np.mean(corr - real_cm)),
-                 "eam_com_cm": float(np.mean(np.abs(corr - real_cm))),
-                 "dp_com_cm": float(np.std(corr, ddof=1)) if len(corr) > 1 else float("nan")}
+        a, b = j[0]
+        idx = np.flatnonzero((t >= a) & (t <= b + 1.0))
+        for k, i in enumerate(idx, 1):
+            linhas.append([etapa, k, "E" if "ESQ" in pp[i] else "D", f"{t[i]:.2f}",
+                           f"{comp[i] * 100:.1f}".replace(".", ","), ""])
+    arq = os.path.join(cp.PASTA_COLETA, NOME_PEGADAS)
+    with open(arq, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["caminhada", "passo", "pe_da_frente", "t_s", "sistema_cm", "real_cm"])
+        w.writerows(linhas)
+    n_c = sum(1 for l in linhas if l[0] == ETAPA_CALIB)
+    n_t = len(linhas) - n_c
+    print("\n" + "=" * 90)
+    print(f"  📝 Passos detectados: calibração {n_c}, teste {n_t}. Planilha: {arq}")
+    print("     Meça as pegadas (calcanhar a calcanhar, na ordem) e preencha real_cm.")
+    print("     Se o número de pegadas não bater com o de passos, deixe real_cm vazio onde não souber.")
+    print(f"     Depois: uv run python teste_calibracao_passo.py --analisar \"{cp.PASTA_COLETA}\"")
+    print("=" * 90)
+
+
+# ----------------------------- análise -----------------------------
+def _num(s):
+    s = (s or "").strip().replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def ler_pegadas(pasta):
+    passos = []
+    with open(os.path.join(pasta, NOME_PEGADAS), encoding="utf-8-sig") as f:
+        for r in csv.DictReader(f, delimiter=";"):
+            s, real = _num(r.get("sistema_cm")), _num(r.get("real_cm"))
+            if s is None or real is None or s <= 0 or real <= 0:
+                continue
+            passos.append({"caminhada": r["caminhada"].strip(), "passo": r["passo"],
+                           "pe": r["pe_da_frente"].strip().upper()[:1], "sistema": s, "real": real})
+    return passos
+
+
+def fatores(passos):
+    """Fator por pé = mediana de real / sistema (sem outliers); com < 3 passos de um pé usa os dois."""
+    def mediana_razao(v):
+        r = np.array([p["real"] / p["sistema"] for p in v])
+        r = r[cp.remover_outliers(r)] if len(r) else r
+        return float(np.clip(np.median(r), *FATOR_LIMITES)) if len(r) >= 3 else None
+    geral = mediana_razao(passos)
+    out = {}
+    for pe in ("E", "D"):
+        f = mediana_razao([p for p in passos if p["pe"] == pe])
+        out[pe] = f if f is not None else (geral if geral is not None else 1.0)
+    return out
+
+
+def erros(passos, fat):
+    r = {}
+    for pe in ("E", "D", "ambos"):
+        v = passos if pe == "ambos" else [p for p in passos if p["pe"] == pe]
+        if not v:
+            continue
+        s = np.array([p["sistema"] for p in v])
+        real = np.array([p["real"] for p in v])
+        c = s * np.array([fat[p["pe"]] for p in v])
+        d_sem, d_com = s - real, c - real
+        dp = float(np.std(d_com, ddof=1)) if len(v) > 1 else float("nan")
+        r[pe] = {"n": len(v), "real_medio_cm": float(real.mean()),
+                 "erro_sem_cm": float(d_sem.mean()), "eam_sem_cm": float(np.abs(d_sem).mean()),
+                 "erro_com_cm": float(d_com.mean()), "eam_com_cm": float(np.abs(d_com).mean()),
+                 "dp_erro_com_cm": dp,
+                 "limites_concordancia_cm": [float(d_com.mean() - 1.96 * dp), float(d_com.mean() + 1.96 * dp)]}
     return r
 
 
-def _imprimir(titulo, fat, erros, real_cm):
-    print(f"\n    {titulo}")
-    print(f"    fator: pé ESQ {fat['ESQ']:.3f}  pé DIR {fat['DIR']:.3f}")
-    print(f"    {'pé':6s} {'n':>3s}  {'média sem':>9s}  {'erro sem':>8s}  {'média com':>9s}  {'erro com':>8s}  {'|erro| com':>10s}")
-    for pe, e in erros.items():
-        print(f"    {pe:6s} {e['n']:3d}  {e['media_sem_cm']:9.1f}  {e['erro_sem_cm']:+8.1f}  "
-              f"{e['media_com_cm']:9.1f}  {e['erro_com_cm']:+8.1f}  {e['eam_com_cm']:10.1f}")
-    print(f"    (distância real {real_cm:.0f} cm; erro = medido − real; valores em cm)")
+def _tabela(titulo, fat, e):
+    print(f"\n  {titulo}")
+    print(f"  fator: pé E {fat['E']:.3f}   pé D {fat['D']:.3f}")
+    print(f"  {'pé':6s} {'n':>3s} {'real médio':>10s} {'erro sem':>9s} {'|erro| sem':>10s} {'erro com':>9s} {'|erro| com':>10s} {'limites (95%)':>17s}")
+    for pe, x in e.items():
+        lim = x["limites_concordancia_cm"]
+        print(f"  {pe:6s} {x['n']:3d} {x['real_medio_cm']:10.1f} {x['erro_sem_cm']:+9.1f} {x['eam_sem_cm']:10.1f} "
+              f"{x['erro_com_cm']:+9.1f} {x['eam_com_cm']:10.1f}   {lim[0]:+5.1f} a {lim[1]:+5.1f}")
 
 
-def _resumo_com_teste(pes, comprimentos):
-    _resumo_original(pes, comprimentos)
-    calib_cm, teste_cm = cp.PASSO_CALIBRACAO_CM, DIST_TESTE_CM
-    i_cal, i_tst = _passos_da_etapa("calibracao_passo"), _passos_da_etapa(NOME_ETAPA_TESTE)
-    print("\n" + "=" * 90)
-    print(f"  🧪 TESTE DA CALIBRAÇÃO DO PASSO: calibra em {calib_cm:.0f} cm, confere em {teste_cm:.0f} cm")
-    print("=" * 90)
-    if len(i_cal) < 3 or len(i_tst) < 3:
-        print(f"    Poucos passos (calibração {len(i_cal)}, teste {len(i_tst)}): não dá para comparar.")
-        return
-    f_cal = _fatores(i_cal, calib_cm)
-    e_tst = _erros(i_tst, teste_cm, f_cal)
-    _imprimir(f"Fator do {calib_cm:.0f} cm aplicado no {teste_cm:.0f} cm (resultado principal):", f_cal, e_tst, teste_cm)
-    f_inv = _fatores(i_tst, teste_cm)
-    e_inv = _erros(i_cal, calib_cm, f_inv)
-    _imprimir(f"Contrário: fator do {teste_cm:.0f} cm aplicado no {calib_cm:.0f} cm:", f_inv, e_inv, calib_cm)
-    print("\n    Leitura: se o erro com fator fica perto de 0 nas duas direções, o erro do passo é")
-    print("    proporcional e um fator basta. Se sobra um erro fixo, precisa de reta com duas distâncias.")
-    _salvar(calib_cm, teste_cm, i_cal, i_tst, f_cal, e_tst, f_inv, e_inv)
+def analisar(pasta):
+    passos = ler_pegadas(pasta)
+    cal = [p for p in passos if p["caminhada"] == ETAPA_CALIB]
+    tst = [p for p in passos if p["caminhada"] == ETAPA_TESTE]
+    arq_txt = os.path.join(pasta, "analise_pegadas.txt")
+    terminal = sys.stdout
+    with open(arq_txt, "w", encoding="utf-8") as f:
+        sys.stdout = cp._Tee(f, terminal)
+        try:
+            print("=" * 90)
+            print("  🧪 CALIBRAÇÃO DO PASSO COM PEGADAS MEDIDAS (erro = sistema − fita, em cm)")
+            print("=" * 90)
+            print(f"  Passos com medida: calibração {len(cal)}, teste {len(tst)}")
+            if len(cal) < 3 or len(tst) < 3:
+                print("  Poucos passos com real_cm preenchido: preencha pelo menos 3 em cada caminhada.")
+                return
+            f_cal, f_tst = fatores(cal), fatores(tst)
+            e_tst, e_cal = erros(tst, f_cal), erros(cal, f_tst)
+            _tabela("Fator da calibração aplicado no teste (resultado principal):", f_cal, e_tst)
+            _tabela("Contrário: fator do teste aplicado na calibração:", f_tst, e_cal)
+            print("\n  Passo a passo no teste (com o fator da calibração):")
+            for p in tst:
+                c = p["sistema"] * f_cal[p["pe"]]
+                print(f"    {p['passo']:>3s} pé {p['pe']}: fita {p['real']:5.1f}  sistema {p['sistema']:5.1f}  "
+                      f"com fator {c:5.1f}  erro {c - p['real']:+5.1f}")
+            print("\n  Leitura: erro com fator perto de 0 nas duas direções = um fator basta. Se sobra um erro")
+            print("  fixo (passos curtos e longos errando para o mesmo lado), precisa de reta com duas distâncias.")
+            with open(os.path.join(pasta, "analise_pegadas.json"), "w", encoding="utf-8") as fj:
+                json.dump({"fator_calibracao": f_cal, "erros_teste": e_tst,
+                           "fator_teste": f_tst, "erros_calibracao_invertido": e_cal}, fj, indent=2, ensure_ascii=False)
+            print(f"\n  Salvo em {arq_txt} e analise_pegadas.json")
+        finally:
+            sys.stdout = terminal
 
 
-def _salvar(calib_cm, teste_cm, i_cal, i_tst, f_cal, e_tst, f_inv, e_inv):
-    pasta = cp.PASTA_COLETA
-    try:
-        with open(os.path.join(pasta, "teste_calibracao_passo.csv"), "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(["etapa", "t_s", "pe", "real_cm", "medido_sem_fator_cm", "fator_usado", "medido_com_fator_cm"])
-            for etapa, idx, real, fat in (("calibracao", i_cal, calib_cm, f_inv), ("teste", i_tst, teste_cm, f_cal)):
-                for i in idx:
-                    pe = _passos_brutos["pes"][i]
-                    fa = fat["ESQ"] if "ESQ" in pe else fat["DIR"]
-                    c = _passos_brutos["comp"][i] * 100
-                    w.writerow([etapa, f"{_passos_brutos['t'][i]:.3f}", pe, f"{real:.1f}", f"{c:.2f}", f"{fa:.4f}", f"{c * fa:.2f}"])
-        with open(os.path.join(pasta, "teste_calibracao_passo.json"), "w", encoding="utf-8") as f:
-            json.dump({"calibracao_cm": calib_cm, "teste_cm": teste_cm,
-                       "fator_da_calibracao": f_cal, "erros_no_teste": e_tst,
-                       "fator_do_teste": f_inv, "erros_na_calibracao_invertido": e_inv}, f, indent=2, ensure_ascii=False)
-        print(f"    Salvo em {pasta}/teste_calibracao_passo.csv e .json")
-    except Exception as e:
-        print(f"    Não foi possível salvar o teste: {e}")
-
-
-cp.aplicar_fator_passo = _aplicar_guardando
-cp.resumo_fator_passo = _resumo_com_teste
-cp.caminhada_calibracao_passo = _calibracao_e_teste
+cp.caminhada_calibracao_passo = _caminhadas
+cp.aplicar_fator_passo = _sem_fator
+cp.resumo_fator_passo = _salvar_pegadas
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Calibra o passo numa distância e confere em outra.")
-    ap.add_argument("--calib", type=float, default=30.0, help="distância das marcas da calibração (cm), padrão 30")
-    ap.add_argument("--teste", type=float, default=40.0, help="distância das marcas do teste (cm), padrão 40")
+    ap = argparse.ArgumentParser(description="Calibração do passo com pegadas de talco medidas com fita.")
+    ap.add_argument("--calib", type=float, default=30.0, help="circuito da caminhada de calibração (cm), padrão 30")
+    ap.add_argument("--teste", type=float, default=40.0, help="circuito da caminhada de teste (cm), padrão 40")
+    ap.add_argument("--analisar", metavar="PASTA", help="analisa o pegadas.csv preenchido de uma coleta")
     args = ap.parse_args()
-    cp.PASSO_CALIBRACAO_CM = args.calib
-    DIST_TESTE_CM = args.teste
-    nome = time.strftime("%Y%m%d_%H%M%S") + f"_calib{args.calib:.0f}_teste{args.teste:.0f}"
+    if args.analisar:
+        analisar(args.analisar)
+        sys.exit(0)
+    DIST_CALIB_CM, DIST_TESTE_CM = args.calib, args.teste
+    nome = time.strftime("%Y%m%d_%H%M%S") + f"_pegadas_calib{args.calib:.0f}_teste{args.teste:.0f}"
     pasta = os.path.join("dados", "debug_casa", nome)
     os.makedirs(pasta, exist_ok=True)
     cp.definir_pasta_saida(pasta)
     print(f"Os arquivos desta coleta vão para {pasta}")
-    print(f"Prepare duas fileiras de marcas: {args.calib:.0f} cm (calibração) e {args.teste:.0f} cm (teste).")
     cp.main()
