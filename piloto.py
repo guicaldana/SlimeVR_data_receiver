@@ -1999,6 +1999,32 @@ def _angulos_pernas_graus():
     return ang
 
 
+def _joelhos_desde(t0_abs):
+    """Rotação do joelho fora do eixo de dobradiça (graus) desde o instante t0_abs (time.time()).
+
+    Só informativo (05/11): mostra se o tracker da coxa ou da canela está torto. Montagens boas
+    deram 2-5° (29/10 e 04/11); ainda não temos um caso torto para definir um limite."""
+    with lock:
+        ti = tempo_inicial
+        brutos = {seg: (list(dados_quat[seg]["t"]), list(dados_quat[seg]["q"])) for seg in cadeia_pernas.SEGMENTOS}
+    if ti is None:
+        return {}
+    series = {}
+    for seg, (ts, qs) in brutos.items():
+        ts = np.asarray(ts, dtype=float) + ti
+        m = ts >= t0_abs
+        if m.sum() < 10:
+            return {}
+        series[seg] = (ts[m], np.asarray(qs, dtype=float)[m])
+    ini = max(v[0][0] for v in series.values())
+    fim = min(v[0][-1] for v in series.values())
+    if fim - ini < 2.0:
+        return {}
+    qs = cadeia_pernas.quats_em(series, np.arange(ini, fim, 0.02))
+    return {pe: cadeia_pernas.joelho_fora_do_eixo(qs[coxa], qs[canela])
+            for pe, (coxa, canela) in SEGMENTOS_PERNAS.items()}
+
+
 def _cadeia_aj_da_subida(d, idx, params=None):
     """Altura (cm) do pé de cima pela cadeia ajustada, com os ângulos medianos de uma subida."""
     pe_cima, pe_apoio = ("ESQ", "DIR") if idx == 0 else ("DIR", "ESQ")
@@ -2421,7 +2447,13 @@ def verificar_calibracao():
               f"(tolerância ±{TOLERANCIA_VERIFICACAO_CM:.1f} cm)")
         print("=" * 90)
         detalhes = {}
+        t0_teste = time.time()
         medidas = _testar_calibracao(altura, detalhes)
+        try:
+            joelhos = _joelhos_desde(t0_teste)
+        except Exception as e:  # só informativo: nunca derruba a conferência
+            print(f"[Aviso] Não foi possível medir os joelhos: {e}")
+            joelhos = {}
         erros = {pe: [m - altura for m in ms] for pe, ms in medidas.items()}
         tronco_ok = {pe: [not _tronco_passou(d.get("tronco_frente_graus", float("nan")),
                                              d.get("tronco_lado_graus", float("nan"))) for d in ds]
@@ -2440,6 +2472,10 @@ def verificar_calibracao():
                            "por_metodo_cm": {pe: {mt: [round(d.get(f"{mt}_corrigido_cm", float("nan")), 2) for d in ds]
                                                   for mt in ("osc", "cadeia", "cadeia_aj")} for pe, ds in detalhes.items()},
                            "tronco_ok": {pe: all(v) for pe, v in tronco_ok.items()},
+                           "joelho_fora_eixo_graus": {pe: (round(r["fora_eixo_graus"], 1) if r else None)
+                                                      for pe, r in joelhos.items()},
+                           "joelho_flexao_graus": {pe: (round(r["flexao_graus"], 0) if r else None)
+                                                   for pe, r in joelhos.items()},
                            "detalhes": {pe: [{k: round(v, 2) for k, v in d.items()} for d in ds]
                                         for pe, ds in detalhes.items()}})
         _salvar_verificacao(tentativas)
@@ -2481,6 +2517,13 @@ def verificar_calibracao():
             print("      O pé de apoio e a pelve deveriam ficar perto de 0. Pé de apoio negativo = ele 'afunda'")
             print("      no SlimeVR (erro na perna de apoio); pé de cima alto com apoio em 0 = erro na perna que sobe.")
             print("      Ângulo da coxa de cima diferente do nivelador do celular (> 3°) = tracker da coxa mal alinhado.")
+        if joelhos:
+            txt = " | ".join(f"joelho {pe}: " + ("sem dobra suficiente" if r is None else
+                             f"{r['fora_eixo_graus']:.1f}° fora do eixo (dobrou {r['flexao_graus']:.0f}°)")
+                             for pe, r in joelhos.items())
+            print(f"\n    Joelhos (só informação): {txt}")
+            print("      Mede o quanto coxa e canela giram fora de uma dobradiça. Montagens boas deram 2-5°;")
+            print("      um valor bem maior sugere tracker da coxa ou da canela torto ou girando na pele.")
         if aprovado:
             print(f"\n  [✓] Calibração aprovada na {len(tentativas)}ª tentativa.")
             print("=" * 90)

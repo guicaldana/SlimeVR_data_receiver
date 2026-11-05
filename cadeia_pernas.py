@@ -113,6 +113,66 @@ class CadeiaPernas:
         return np.maximum(0.0, -dif), np.maximum(0.0, dif)  # (ESQ, DIR)
 
 
+def _mult_quat(a, b):
+    """Produto de quaternions (N,4) em ordem x,y,z,w."""
+    a, b = np.atleast_2d(a), np.atleast_2d(b)
+    x1, y1, z1, w1 = a[:, 0], a[:, 1], a[:, 2], a[:, 3]
+    x2, y2, z2, w2 = b[:, 0], b[:, 1], b[:, 2], b[:, 3]
+    return np.stack([w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                     w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                     w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+                     w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2], axis=1)
+
+
+def _vetor_rotacao(q):
+    """Quaternions (N,4) -> vetor de rotação (N,3) em radianos (eixo × ângulo)."""
+    q = np.atleast_2d(q).astype(float)
+    q = q / np.linalg.norm(q, axis=1, keepdims=True)
+    q = q * np.where(q[:, 3:4] < 0, -1.0, 1.0)
+    s = np.linalg.norm(q[:, :3], axis=1)
+    ang = 2.0 * np.arctan2(s, q[:, 3])
+    fator = np.where(s > 1e-9, ang / np.maximum(s, 1e-12), 2.0)
+    return q[:, :3] * fator[:, None]
+
+
+# O joelho funciona quase como uma dobradiça: a canela gira em relação à coxa em torno de um eixo
+# fixo. Se a rotação medida entre os trackers da coxa e da canela sai desse eixo, um dos trackers
+# está torto ou girando sobre a pele. Nos dados de 29/10 e 04/11: joelhos bem montados 3-7°,
+# joelho com tracker torto 16°.
+FLEXAO_MINIMA_JOELHO_GRAUS = 10.0   # só entram os instantes com o joelho dobrado pelo menos isso
+AMOSTRAS_MINIMAS_JOELHO = 30
+
+
+def joelho_fora_do_eixo(q_coxa, q_canela):
+    """Mede o quanto o joelho gira fora de um eixo de dobradiça.
+
+    q_coxa, q_canela: quaternions (N,4) x,y,z,w nos mesmos instantes, com o joelho dobrando e
+    esticando algumas vezes. Devolve {"fora_eixo_graus": mediana da rotação fora do eixo,
+    "flexao_graus": amplitude da flexão vista, "amostras": n} ou None se o joelho quase não dobrou.
+    """
+    qc, qs = np.atleast_2d(q_coxa), np.atleast_2d(q_canela)
+    n = min(len(qc), len(qs))
+    if n < AMOSTRAS_MINIMAS_JOELHO:
+        return None
+    rel = _mult_quat(_conj(qc[:n]), qs[:n])       # canela no referencial da coxa
+    ref = _media_quat(rel)
+    rv = _vetor_rotacao(_mult_quat(_conj(np.tile(ref, (n, 1))), rel))
+    # Qualquer referência serve: com uma dobradiça perfeita, ref⁻¹·rel ainda gira num eixo fixo.
+    ang = np.linalg.norm(rv, axis=1)
+    usar = ang > np.radians(FLEXAO_MINIMA_JOELHO_GRAUS)
+    if usar.sum() < AMOSTRAS_MINIMAS_JOELHO:
+        return None
+    eixos = rv[usar] / ang[usar, None]
+    eixos *= np.sign(eixos @ eixos[0])[:, None]
+    _, vetores = np.linalg.eigh(eixos.T @ eixos)
+    b = vetores[:, -1]
+    ao_longo = rv @ b
+    fora = np.linalg.norm(rv[usar] - np.outer(ao_longo[usar], b), axis=1)
+    return {"fora_eixo_graus": float(np.degrees(np.median(fora))),
+            "flexao_graus": float(np.degrees(np.ptp(ao_longo))),
+            "amostras": int(usar.sum())}
+
+
 def comprimentos_de_osc(pos_quadril, pos_joelho_e, pos_joelho_d, pos_pe_e, pos_pe_d):
     """Estima os comprimentos (m) a partir das posições OSC na calibração.
 
