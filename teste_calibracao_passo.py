@@ -5,7 +5,7 @@ Script à parte (não muda o experimento de comprimento). Sequência:
   1. calibração estática do calculo_passo (os dois pés no chão), sem caixa;
   2. caminhada de calibração nas marcas de 30 cm (calcanhar a calcanhar), 30 s, ida e volta:
      dá o fator de cada pé = distância real / mediana medida;
-  3. 10 s parado no início das marcas de 40 cm;
+  3. pausa para ajustar o circuito para 40 cm: o teste só começa quando apertar Enter;
   4. caminhada de teste nas marcas de 40 cm, 30 s, ida e volta. A gravação termina sozinha.
 Os passos da calibração não entram no resultado. O relatório mostra, para cada pé, o erro no
 40 cm sem o fator e com o fator do 30 cm, e também o contrário (fator do 40 conferido no 30),
@@ -29,13 +29,12 @@ import numpy as np
 import calculo_passo as cp
 
 TEMPO_TESTE_S = 30        # caminhada de teste (ida e volta nas marcas)
-TEMPO_IR_AO_INICIO_S = 10  # parado no início das marcas de teste antes de caminhar
 NOME_ETAPA_TESTE = "teste_passo"
 
 cp.PEDIR_PARTICIPANTE = False   # sem cadastro
 cp.CALIBRAR_CAIXA = False       # OSC bruto, sem ganho da caixa
 cp.CALIBRAR_PASSO = True        # caminhada de calibração do passo antes da gravação
-cp.ROTEIRO_GUIADO = True        # roteiro curto (ver montar_roteiro): termina sozinho
+cp.ROTEIRO_GUIADO = False       # sem roteiro: a caminhada de teste vem logo depois da calibração do passo
 
 DIST_TESTE_CM = 40.0
 _passos_brutos = {}             # todos os passos antes do fator (preenchido no processamento)
@@ -43,13 +42,30 @@ _aplicar_original = cp.aplicar_fator_passo
 _resumo_original = cp.resumo_fator_passo
 
 
-def montar_roteiro():
-    return [
-        ("parado_inicio_teste", TEMPO_IR_AO_INICIO_S,
-         f"Vá para o INÍCIO das marcas de {DIST_TESTE_CM:.0f} cm e fique PARADO, tronco reto"),
-        (NOME_ETAPA_TESTE, TEMPO_TESTE_S,
-         f"CAMINHE pisando com o calcanhar em cada marca de {DIST_TESTE_CM:.0f} cm; no fim vire e volte"),
-    ]
+_calibracao_passo_original = cp.caminhada_calibracao_passo
+
+
+def _calibracao_e_teste():
+    """Calibração do passo; depois espera o Enter (circuito ajustado) e grava a caminhada de teste."""
+    _calibracao_passo_original()
+    print("\n" + "=" * 90)
+    print(f"   🧪 TESTE: caminhada nas marcas de {DIST_TESTE_CM:.0f} cm")
+    print("=" * 90)
+    print(f"    Ajuste o circuito para {DIST_TESTE_CM:.0f} cm entre calcanhares. A gravação continua enquanto isso,")
+    print("    mas esses movimentos não entram no resultado.")
+    print(f"    Ao bipe, CAMINHE pisando com o calcanhar em cada marca, tronco reto, ritmo normal.")
+    print(f"    No fim das marcas, vire e volte, até o bipe final ({TEMPO_TESTE_S:.0f} s).")
+    input("    [Enter] quando o circuito estiver pronto e a pessoa no início das marcas: ")
+    cp._aviso_sonoro(2)
+    t0 = time.time() - cp.tempo_inicial
+    fim = time.time() + TEMPO_TESTE_S
+    while cp.rodando and time.time() < fim:
+        print(f"    Caminhando nas marcas de {DIST_TESTE_CM:.0f} cm... {fim - time.time():4.0f}s   ", end="\r", flush=True)
+        time.sleep(0.2)
+    cp.fases_sessao.append((NOME_ETAPA_TESTE, t0, time.time() - cp.tempo_inicial))
+    cp._aviso_sonoro(3)
+    print("\n    Teste concluído. Encerrando a gravação...")
+    cp.roteiro_terminou = True   # o laço principal termina e processa a coleta
 
 
 def _aplicar_guardando(tempos, comprimentos, impactos, pes, projecoes):
@@ -167,6 +183,7 @@ def _salvar(calib_cm, teste_cm, i_cal, i_tst, f_cal, e_tst, f_inv, e_inv):
 
 cp.aplicar_fator_passo = _aplicar_guardando
 cp.resumo_fator_passo = _resumo_com_teste
+cp.caminhada_calibracao_passo = _calibracao_e_teste
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Calibra o passo numa distância e confere em outra.")
@@ -175,7 +192,6 @@ if __name__ == "__main__":
     args = ap.parse_args()
     cp.PASSO_CALIBRACAO_CM = args.calib
     DIST_TESTE_CM = args.teste
-    cp.ROTEIRO = montar_roteiro()
     nome = time.strftime("%Y%m%d_%H%M%S") + f"_calib{args.calib:.0f}_teste{args.teste:.0f}"
     pasta = os.path.join("dados", "debug_casa", nome)
     os.makedirs(pasta, exist_ok=True)
