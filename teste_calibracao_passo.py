@@ -12,7 +12,7 @@ Coleta:
      fica parada 3 s até o bipe. Conferir no olho se os calcanhares estão nas marcas;
   3. CIRCUITOS com talco (padrão 30, 40 e 50 cm, em ordem sorteada): [Enter] começa, [Enter]
      termina, uma direção só. Entre um circuito e outro: ler as pegadas, limpar, mudar a EVA;
-  4. CAMINHADA LIVRE (opcional, padrão sim): ritmo confortável, numa faixa ao lado da EVA.
+  4. CAMINHADA LIVRE (opcional, padrão NÃO; --livre): ritmo confortável, numa faixa ao lado da EVA.
 No fim o programa salva:
   - calibracao_parada.json: distância medida pelo sistema em cada posição parada;
   - pegadas.csv: um passo detectado por linha (caminhada, número, pé da frente, valor do sistema)
@@ -31,7 +31,7 @@ A análise compara, em cada caminhada, o erro (sistema − talco):
 Se a calibração parada errar perto do rodízio, ela serve. Resultado em analise_pegadas.txt/.json.
 
     uv run python teste_calibracao_passo.py
-    uv run python teste_calibracao_passo.py --parado 25 35 45 55 --circuitos 30 40 50 --sem-livre
+    uv run python teste_calibracao_passo.py --parado 25 35 45 55 --circuitos 30 40 50 --livre
     uv run python teste_calibracao_passo.py --ordem          # circuitos na ordem dada, sem sorteio
 """
 import argparse
@@ -63,7 +63,7 @@ cp.ROTEIRO_GUIADO = False
 
 DIST_PARADO_CM = [25.0, 35.0, 45.0, 55.0]   # nenhuma igual aos circuitos de teste
 CIRCUITOS_CM = [30.0, 40.0, 50.0]
-FAZER_LIVRE = True
+FAZER_LIVRE = False   # caminhada livre fora do roteiro (06/11)
 SORTEAR = True
 
 _sinal_ap = {}   # t e distância anteroposterior entre os pés, guardados no processamento
@@ -370,14 +370,14 @@ if __name__ == "__main__":
     ap.add_argument("--circuitos", type=float, nargs="+", default=CIRCUITOS_CM,
                     help="circuitos das caminhadas com talco (cm), padrão 30 40 50")
     ap.add_argument("--ordem", action="store_true", help="circuitos na ordem dada, sem sorteio")
-    ap.add_argument("--sem-livre", action="store_true", help="não faz a caminhada livre")
+    ap.add_argument("--livre", action="store_true", help="inclui a caminhada livre no fim (fora do roteiro)")
     ap.add_argument("--analisar", metavar="PASTA", help="analisa o pegadas.csv preenchido de uma coleta")
     args = ap.parse_args()
     if args.analisar:
         analisar(args.analisar)
         sys.exit(0)
     DIST_PARADO_CM, CIRCUITOS_CM = list(args.parado), list(args.circuitos)
-    SORTEAR, FAZER_LIVRE = not args.ordem, not args.sem_livre
+    SORTEAR, FAZER_LIVRE = not args.ordem, args.livre
     nome = time.strftime("%Y%m%d_%H%M%S") + "_passo_parado"
     pasta = os.path.join("dados", "debug_casa", nome)
     os.makedirs(pasta, exist_ok=True)
