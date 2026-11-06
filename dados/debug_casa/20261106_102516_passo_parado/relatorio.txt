@@ -1,0 +1,197 @@
+
+==========================================================================================
+  🦶 Calibração parada (distância entre os pés vista pelo sistema):
+       25 cm, pé E na frente:  25.6 cm
+       25 cm, pé D na frente:  25.1 cm
+       35 cm, pé E na frente:  37.6 cm
+       35 cm, pé D na frente:  37.0 cm
+       45 cm, pé E na frente:  46.4 cm
+       45 cm, pé D na frente:  49.6 cm
+       55 cm, pé E na frente:  59.1 cm
+       55 cm, pé D na frente:  59.4 cm
+
+  📝 Passos detectados: circuito_30 20, circuito_50 21, circuito_40 22
+     Planilha: dados\debug_casa\20261106_102516_passo_parado\pegadas.csv
+     Preencha real_cm com o talco (calcanhar a calcanhar, na ordem).
+     Se o número de pegadas não bater com o de passos, deixe real_cm vazio onde não souber.
+     Depois: uv run python teste_calibracao_passo.py --analisar "dados\debug_casa\20261106_102516_passo_parado"
+==========================================================================================
+
+
+==========================================================================================
+      RELATÓRIO CLÍNICO & BIOMECÂNICO: ARQUITETURA DE FUSÃO SOLARXR + SLIMEVR
+==========================================================================================
+Duração da sessão:       666.1 s
+Passos detectados:       139 (Outliers MAD: 0)
+
+--- 1. Classificação Postural (Referencial Pelvino - Eq. 1.3) ---
+  Tempo Em Pé:   666.1 s (100.0%)
+  Tempo Sentado:   0.0 s (  0.0%)
+  Altura Média Quadril-Solo: 94.9 cm (± 0.9 cm)
+
+--- 2. Postura do Tronco (Peito - Tracker 6) ---
+  Inclinação média: +0.52° (Ereto [OK])
+
+--- 3. Parâmetros Espaciais (Projeção Vetorial Anteroposterior - Seção 3) ---
+  Comprimento médio da passada: 0.340 m (± 0.160 m)
+  Largura média da base (X):    29.2 cm (Base de suporte lateral)
+  Clearance Real do Solado:     6.2 cm (± 3.5 cm) [Folga solo-sapato: 1.5 - 4.5 cm]
+  Elevação Tornozelo / Flexão:  6.2 cm (± 3.5 cm) [Encurtamento joelho: 10 - 18 cm]
+  Pé ESQ (65 passos): 0.343 m | Solado: 7.0 cm | Tornozelo: 7.0 cm
+  Pé DIR (74 passos): 0.337 m | Solado: 5.6 cm | Tornozelo: 5.6 cm
+  Índice de Simetria do Passo:  98.4%
+  Cadência estimada:            14.1 passos/min
+
+--- 4. Avaliação Clínica para Doença de Parkinson (Biomarcadores de Risco) ---
+  Variabilidade do Passo (CV):  47.1% [⚠ ALTO (Elevado Risco de Quedas)]
+  Taxa de Microbasia (< 30cm): 48/139 (34.5%) ⚠ Indicativo de passos curtos
+  Risco de Arraste (Solado < 2.0cm): 20/139 (14.4%) ✔ Clearance adequado
+
+--- Tabela Integrada Passo a Passo (Sincronia Heel-Strike SolarXR + Projeção Anteroposterior) ---
+#    Tempo(s)  Pé     Etapa                Impacto(m/s²)   Comprim.(m)   Solado(cm)   Tornoz(cm)   Tronco     Status
+--------------------------------------------------------------------------------------------------------------
+1    4.54      DIR                         4.5             0.316         2.1          2.1          -9.9°      Válido
+2    7.92      ESQ                         4.3             0.286         4.3          4.3          -9.2°      Válido
+3    23.71     DIR                         4.0             0.284         4.5          4.5          -8.7°      Válido
+4    35.66     ESQ                         6.7             0.405         3.3          3.3          -8.1°      Válido
+5    48.44     DIR                         4.3             0.428         3.2          3.2          -9.6°      Válido
+6    69.97     ESQ*                        0.0             0.475         5.4          5.4          +2.7°      Válido
+7    75.67     DIR                         6.4             0.507         1.6          1.6          -8.5°      Válido
+8    89.19     DIR*                        0.0             0.058         7.2          7.2          -23.2°     Válido
+9    92.28     ESQ                         20.0            0.604         11.0         11.0         -3.2°      Válido
+10   105.80    DIR                         22.6            0.598         8.6          8.6          -1.5°      Válido
+11   121.49    ESQ                         7.7             0.228         3.4          3.4          -17.2°     Válido
+12   122.63    DIR                         10.0            0.245         3.3          3.3          -11.5°     Válido
+13   124.80    ESQ                         8.0             0.204         3.4          3.4          -18.5°     Válido
+14   141.10    DIR    circuito_30          15.2            0.581         8.4          8.4          -2.1°      Válido
+15   142.17    ESQ    circuito_30          18.7            0.339         10.6         10.6         -3.9°      Válido
+16   143.22    DIR    circuito_30          8.3             0.317         5.3          5.3          -7.2°      Válido
+17   144.34    ESQ    circuito_30          15.0            0.338         7.4          7.4          -5.7°      Válido
+18   145.40    DIR    circuito_30          14.6            0.318         4.9          4.9          -7.2°      Válido
+19   146.52    ESQ    circuito_30          7.7             0.307         7.0          7.0          -4.9°      Válido
+20   147.58    DIR    circuito_30          16.7            0.322         6.6          6.6          -6.2°      Válido
+21   148.66    ESQ    circuito_30          6.6             0.304         7.7          7.7          -6.9°      Válido
+22   149.69    DIR    circuito_30          11.0            0.323         4.9          4.9          -6.6°      Válido
+23   150.69    ESQ    circuito_30          8.1             0.324         7.4          7.4          -6.7°      Válido
+24   151.73    DIR    circuito_30          18.8            0.313         4.9          4.9          -5.1°      Válido
+25   152.83    ESQ    circuito_30          10.6            0.309         7.8          7.8          -4.5°      Válido
+26   153.95    DIR    circuito_30          9.1             0.315         6.4          6.4          -4.7°      Válido
+27   154.98    ESQ    circuito_30          11.4            0.313         7.7          7.7          -4.5°      Válido
+28   156.12    DIR    circuito_30          17.8            0.367         7.4          7.4          -5.8°      Válido
+29   157.28    ESQ    circuito_30          6.7             0.284         6.7          6.7          -3.3°      Válido
+30   158.33    DIR    circuito_30          17.8            0.334         7.1          7.1          -7.3°      Válido
+31   159.33    ESQ    circuito_30          10.2            0.318         7.0          7.0          -5.0°      Válido
+32   160.47    DIR    circuito_30          12.2            0.306         6.3          6.3          -7.6°      Válido
+33   161.49    ESQ    circuito_30          14.0            0.342         7.2          7.2          -6.7°      Válido
+34   207.86    ESQ*                        0.0             0.154         2.0          2.0          -2.8°      Válido
+35   208.64    DIR*                        0.0             0.115         0.0          0.0          -2.8°      Válido
+36   209.40    ESQ*                        0.0             0.057         0.0          0.0          -2.8°      Válido
+37   211.79    DIR                         5.3             0.248         5.8          5.8          +0.9°      Válido
+38   234.37    DIR*                        0.0             0.065         0.0          0.0          +1.6°      Válido
+39   235.21    ESQ                         10.1            0.190         1.7          1.7          -7.7°      Válido
+40   237.01    DIR*                        0.0             0.095         0.0          0.0          +8.5°      Válido
+41   240.70    ESQ*                        0.0             0.098         0.0          0.0          +7.4°      Válido
+42   246.57    ESQ*                        0.0             0.064         0.0          0.0          +6.5°      Válido
+43   273.44    DIR                         3.6             0.173         0.0          0.0          +6.0°      Válido
+44   291.58    DIR*                        0.0             0.120         1.4          1.4          +7.0°      Válido
+45   300.52    DIR*                        0.0             0.056         0.0          0.0          +9.7°      Válido
+46   306.09    DIR*                        0.0             0.070         0.0          0.0          +7.8°      Válido
+47   313.37    DIR*                        0.0             0.092         0.0          0.0          +5.2°      Válido
+48   329.02    DIR                         7.0             0.238         1.5          1.5          +4.4°      Válido
+49   367.30    ESQ*                        0.0             0.065         3.8          3.8          +5.7°      Válido
+50   373.01    DIR*                        0.0             0.087         0.0          0.0          +4.7°      Válido
+51   377.25    ESQ*                        0.0             0.140         0.0          0.0          +4.9°      Válido
+52   381.69    DIR*                        0.0             0.140         0.0          0.0          +5.7°      Válido
+53   427.20    DIR                         27.2            0.381         1.7          1.7          -8.7°      Válido
+54   427.78    ESQ                         18.5            0.127         3.9          3.9          -11.9°     Válido
+55   428.41    DIR*                        0.0             0.113         7.1          7.1          -15.0°     Válido
+56   444.00    ESQ    circuito_50          28.8            0.438         5.6          5.6          -4.5°      Válido
+57   445.13    DIR    circuito_50          9.1             0.448         7.5          7.5          -6.7°      Válido
+58   445.92    ESQ    circuito_50          5.7             0.543         8.3          8.3          -2.8°      Válido
+59   447.47    DIR    circuito_50          8.5             0.540         7.3          7.3          -2.2°      Válido
+60   448.42    ESQ    circuito_50          5.6             0.494         8.3          8.3          -3.2°      Válido
+61   450.36    DIR*   circuito_50          0.0             0.469         8.5          8.5          -4.5°      Válido
+62   451.58    ESQ    circuito_50          18.3            0.482         6.3          6.3          -0.5°      Válido
+63   452.55    DIR    circuito_50          6.7             0.481         9.3          9.3          -3.1°      Válido
+64   453.59    ESQ    circuito_50          5.1             0.448         9.3          9.3          -3.0°      Válido
+65   454.69    DIR    circuito_50          22.8            0.513         7.4          7.4          +0.3°      Válido
+66   455.92    ESQ    circuito_50          14.7            0.493         8.6          8.6          +1.2°      Válido
+67   456.98    DIR    circuito_50          16.8            0.532         9.7          9.7          -0.2°      Válido
+68   458.10    ESQ    circuito_50          5.4             0.487         9.7          9.7          -0.9°      Válido
+69   459.28    DIR    circuito_50          20.1            0.505         9.2          9.2          -0.4°      Válido
+70   460.27    ESQ    circuito_50          14.2            0.472         11.0         11.0         -2.5°      Válido
+71   461.36    DIR    circuito_50          43.2            0.515         8.1          8.1          -2.5°      Válido
+72   462.36    ESQ    circuito_50          15.4            0.492         9.7          9.7          -2.8°      Válido
+73   463.45    DIR    circuito_50          22.1            0.498         8.9          8.9          -2.6°      Válido
+74   464.31    ESQ    circuito_50          11.2            0.547         9.5          9.5          -5.2°      Válido
+75   465.45    DIR    circuito_50          35.8            0.496         9.2          9.2          -4.2°      Válido
+76   466.50    ESQ    circuito_50          22.6            0.500         9.3          9.3          -1.5°      Válido
+77   475.47    DIR                         5.2             0.111         8.3          8.3          -0.3°      Válido
+78   476.30    ESQ                         23.4            0.244         5.3          5.3          +1.5°      Válido
+79   478.18    DIR                         28.9            0.304         4.2          4.2          +7.9°      Válido
+80   486.13    ESQ                         13.4            0.375         7.5          7.5          -1.8°      Válido
+81   487.29    DIR                         38.5            0.344         6.5          6.5          -2.8°      Válido
+82   488.13    ESQ                         6.9             0.388         6.7          6.7          -2.4°      Válido
+83   489.13    DIR                         22.1            0.257         7.2          7.2          -3.0°      Válido
+84   501.47    ESQ                         9.7             0.263         2.9          2.9          -8.7°      Válido
+85   503.37    DIR                         18.6            0.447         5.1          5.1          -0.5°      Válido
+86   504.06    ESQ                         16.6            0.400         9.3          9.3          -2.8°      Válido
+87   505.10    DIR                         32.8            0.420         7.0          7.0          +1.5°      Válido
+88   505.78    ESQ                         15.4            0.274         3.9          3.9          -2.4°      Válido
+89   506.78    DIR                         18.0            0.293         5.8          5.8          -3.9°      Válido
+90   507.82    ESQ                         8.4             0.191         3.6          3.6          -1.9°      Válido
+91   508.81    DIR                         22.0            0.492         8.2          8.2          -1.8°      Válido
+92   509.85    ESQ                         25.8            0.357         7.5          7.5          -2.8°      Válido
+93   510.53    DIR                         22.4            0.206         7.6          7.6          -1.7°      Válido
+94   524.23    DIR                         52.0            0.162         2.1          2.1          +4.6°      Válido
+95   561.37    ESQ                         9.9             0.294         5.5          5.5          -3.2°      Válido
+96   564.67    ESQ*                        0.0             0.065         3.5          3.5          +4.7°      Válido
+97   577.82    DIR*                        0.0             0.051         0.0          0.0          +5.1°      Válido
+98   583.96    DIR*                        0.0             0.069         0.0          0.0          +5.6°      Válido
+99   585.57    DIR                         5.8             0.213         4.8          4.8          +5.2°      Válido
+100  614.40    ESQ                         10.0            0.337         6.5          6.5          -4.1°      Válido
+101  615.39    DIR                         16.7            0.295         6.7          6.7          -5.1°      Válido
+102  616.16    ESQ                         9.4             0.214         6.9          6.9          -4.5°      Válido
+103  622.51    ESQ                         20.6            0.349         3.6          3.6          -3.9°      Válido
+104  623.85    DIR                         33.3            0.661         7.7          7.7          -15.3°     Válido
+105  624.55    ESQ                         21.1            0.642         12.9         12.9         -8.9°      Válido
+106  625.03    DIR                         37.4            0.655         11.7         11.7         -5.4°      Válido
+107  625.80    ESQ                         9.7             0.445         6.8          6.8          -5.0°      Válido
+108  626.18    DIR*                        0.0             0.730         11.7         11.7         -5.0°      Válido
+109  627.25    ESQ*                        0.0             0.417         23.1         23.1         -6.7°      Válido
+110  628.40    DIR                         16.2            0.655         8.6          8.6          -6.6°      Válido
+111  628.99    ESQ                         27.3            0.478         8.8          8.8          -2.8°      Válido
+112  629.44    DIR                         41.2            0.750         12.2         12.2         -0.6°      Válido
+113  630.31    ESQ                         22.0            0.484         6.0          6.0          -5.8°      Válido
+114  630.58    DIR*                        0.0             0.305         5.6          5.6          -11.7°     Válido
+115  631.29    ESQ*                        0.0             0.168         3.7          3.7          -11.0°     Válido
+116  632.05    DIR                         26.2            0.153         3.0          3.0          -12.9°     Válido
+117  637.64    ESQ    circuito_40          8.1             0.347         6.7          6.7          -5.7°      Válido
+118  638.93    DIR    circuito_40          16.9            0.406         7.4          7.4          -0.8°      Válido
+119  640.10    ESQ    circuito_40          11.0            0.400         9.0          9.0          -4.6°      Válido
+120  641.24    DIR    circuito_40          13.8            0.434         7.2          7.2          -3.5°      Válido
+121  642.53    ESQ    circuito_40          8.3             0.399         8.0          8.0          -2.7°      Válido
+122  643.54    DIR    circuito_40          17.4            0.422         7.5          7.5          -5.5°      Válido
+123  644.55    ESQ    circuito_40          16.4            0.411         8.5          8.5          -5.4°      Válido
+124  645.59    DIR    circuito_40          28.7            0.445         7.1          7.1          -3.7°      Válido
+125  646.55    ESQ    circuito_40          9.2             0.379         7.2          7.2          -6.2°      Válido
+126  647.60    DIR    circuito_40          22.5            0.431         6.7          6.7          -3.5°      Válido
+127  648.59    ESQ    circuito_40          16.9            0.408         11.1         11.1         -4.9°      Válido
+128  649.51    DIR    circuito_40          25.9            0.397         7.8          7.8          -3.7°      Válido
+129  650.51    ESQ    circuito_40          12.9            0.387         9.9          9.9          -4.3°      Válido
+130  651.48    DIR    circuito_40          15.6            0.436         7.9          7.9          -4.6°      Válido
+131  652.38    ESQ    circuito_40          12.0            0.389         11.1         11.1         -3.8°      Válido
+132  653.42    DIR    circuito_40          30.0            0.447         7.3          7.3          -0.6°      Válido
+133  654.42    ESQ    circuito_40          19.9            0.411         10.1         10.1         -5.2°      Válido
+134  655.38    DIR    circuito_40          25.6            0.431         7.2          7.2          -5.1°      Válido
+135  656.33    ESQ    circuito_40          13.7            0.360         12.3         12.3         -5.5°      Válido
+136  657.29    DIR    circuito_40          27.3            0.472         7.0          7.0          -5.3°      Válido
+137  658.22    ESQ    circuito_40          12.6            0.338         11.4         11.4         -7.4°      Válido
+138  658.89    DIR*   circuito_40          0.0             0.089         6.1          6.1          -7.4°      Válido
+139  664.95    DIR*                        0.0             0.056         2.4          2.4          +3.3°      Válido
+==============================================================================================================
+
+Resultados consolidados salvos em 'dados\debug_casa\20261106_102516_passo_parado\resultado_completo_marcha.csv'.
+Gráfico salvo em dados\debug_casa\20261106_102516_passo_parado\painel_completo.png
+Gráfico salvo em dados\debug_casa\20261106_102516_passo_parado\comprimento_passo.png
+Gráfico salvo em dados\debug_casa\20261106_102516_passo_parado\altura_passo.png

@@ -1,0 +1,76 @@
+{
+  "medidas": [
+    {
+      "distancia_cm": 25.0,
+      "pe_pedido": "E",
+      "pe_medido": "E",
+      "sistema_cm": 25.563497727744796,
+      "dp_cm": 0.63102672430135,
+      "n": 252,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 25.0,
+      "pe_pedido": "D",
+      "pe_medido": "D",
+      "sistema_cm": 25.081046575059137,
+      "dp_cm": 0.9763321513580597,
+      "n": 252,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 35.0,
+      "pe_pedido": "E",
+      "pe_medido": "E",
+      "sistema_cm": 37.55723915354008,
+      "dp_cm": 0.39303269087386294,
+      "n": 252,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 35.0,
+      "pe_pedido": "D",
+      "pe_medido": "D",
+      "sistema_cm": 37.001675369990124,
+      "dp_cm": 0.5036799014384251,
+      "n": 252,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 45.0,
+      "pe_pedido": "E",
+      "pe_medido": "E",
+      "sistema_cm": 46.3864730159759,
+      "dp_cm": 0.4452156121141276,
+      "n": 253,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 45.0,
+      "pe_pedido": "D",
+      "pe_medido": "D",
+      "sistema_cm": 49.59031571113789,
+      "dp_cm": 0.14176169758374838,
+      "n": 252,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 55.0,
+      "pe_pedido": "E",
+      "pe_medido": "E",
+      "sistema_cm": 59.137280425874955,
+      "dp_cm": 0.24157032149080468,
+      "n": 252,
+      "obs": ""
+    },
+    {
+      "distancia_cm": 55.0,
+      "pe_pedido": "D",
+      "pe_medido": "D",
+      "sistema_cm": 59.4311314255111,
+      "dp_cm": 0.07531385072846042,
+      "n": 253,
+      "obs": ""
+    }
+  ]
+}
