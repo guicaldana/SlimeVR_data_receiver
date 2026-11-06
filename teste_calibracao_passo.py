@@ -7,7 +7,7 @@ posição, em distâncias conhecidas, como a caixa na altura. As caminhadas fica
 
 Coleta:
   1. calibração estática do calculo_passo (os dois pés no chão), sem caixa;
-  2. CALIBRAÇÃO PARADA: para cada distância (padrão 25, 40 e 55 cm) e cada pé na frente, a pessoa
+  2. CALIBRAÇÃO PARADA: para cada distância (padrão 25, 35, 45 e 55 cm, nenhuma igual a um circuito) e cada pé na frente, a pessoa
      põe o calcanhar de trás na marca 0 e o calcanhar da frente na marca da distância, [Enter],
      fica parada 3 s até o bipe. Conferir no olho se os calcanhares estão nas marcas;
   3. CIRCUITOS com talco (padrão 30, 40 e 50 cm, em ordem sorteada): [Enter] começa, [Enter]
@@ -31,7 +31,7 @@ A análise compara, em cada caminhada, o erro (sistema − talco):
 Se a calibração parada errar perto do rodízio, ela serve. Resultado em analise_pegadas.txt/.json.
 
     uv run python teste_calibracao_passo.py
-    uv run python teste_calibracao_passo.py --parado 25 40 55 --circuitos 30 40 50 --sem-livre
+    uv run python teste_calibracao_passo.py --parado 25 35 45 55 --circuitos 30 40 50 --sem-livre
     uv run python teste_calibracao_passo.py --ordem          # circuitos na ordem dada, sem sorteio
 """
 import argparse
@@ -61,7 +61,7 @@ cp.CALIBRAR_CAIXA = False       # OSC bruto, sem ganho da caixa
 cp.CALIBRAR_PASSO = True        # faz o main chamar as etapas abaixo depois da calibração estática
 cp.ROTEIRO_GUIADO = False
 
-DIST_PARADO_CM = [25.0, 40.0, 55.0]
+DIST_PARADO_CM = [25.0, 35.0, 45.0, 55.0]   # nenhuma igual aos circuitos de teste
 CIRCUITOS_CM = [30.0, 40.0, 50.0]
 FAZER_LIVRE = True
 SORTEAR = True
@@ -366,7 +366,7 @@ cp.resumo_fator_passo = _salvar
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Calibração parada do passo conferida com pegadas de talco.")
     ap.add_argument("--parado", type=float, nargs="+", default=DIST_PARADO_CM,
-                    help="distâncias da calibração parada (cm), padrão 25 40 55")
+                    help="distâncias da calibração parada (cm), padrão 25 35 45 55")
     ap.add_argument("--circuitos", type=float, nargs="+", default=CIRCUITOS_CM,
                     help="circuitos das caminhadas com talco (cm), padrão 30 40 50")
     ap.add_argument("--ordem", action="store_true", help="circuitos na ordem dada, sem sorteio")
