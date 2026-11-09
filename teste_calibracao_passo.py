@@ -133,6 +133,49 @@ def ler_pegadas(pasta):
     return passos
 
 
+def digitar_medidas(pasta):
+    """Pede no terminal a medida da fita de cada passo do pegadas.csv, na ordem, e grava a cada resposta.
+    Enter vazio pula o passo (fica sem medida); 'v' volta um passo; 'f' para e continua depois
+    (rode de novo com --medir PASTA: recomeça no primeiro passo sem medida)."""
+    arq = os.path.join(pasta, NOME_PEGADAS)
+    with open(arq, encoding="utf-8-sig") as f:
+        linhas = list(csv.reader(f, delimiter=";"))
+    cab, dados = linhas[0], linhas[1:]
+    col = cab.index("real_cm")
+
+    def gravar():
+        with open(arq, "w", newline="", encoding="utf-8-sig") as f:
+            csv.writer(f, delimiter=";").writerows([cab] + dados)
+
+    print("\n" + "=" * 90)
+    print("  📏 MEDIDAS DA FITA (calcanhar a calcanhar, na ordem das pegadas), em cm")
+    print("     Enter vazio = pula   v = volta um passo   f = para e continua depois")
+    print("=" * 90)
+    varias = len({l[0] for l in dados}) > 1
+    i = next((k for k, l in enumerate(dados) if not l[col].strip()), len(dados))
+    while i < len(dados):
+        l = dados[i]
+        atual = f" [{l[col]}]" if l[col].strip() else ""
+        nome = (l[0].replace("_passo", "") + " ") if varias else ""
+        r = input(f"    {nome}passo {l[1]:>2s} pé {l[2]} (sistema {l[4]} cm){atual}: ").strip().lower()
+        if r == "f":
+            print(f"    Parado. Para continuar: uv run python {NOME_SCRIPT} --medir \"{pasta}\"")
+            return False
+        if r == "v":
+            i = max(0, i - 1)
+            continue
+        if r:
+            v = _num(r)
+            if v is None or v <= 0:
+                print("    Valor inválido, digite em cm (ex.: 31,5).")
+                continue
+            l[col] = f"{v:.1f}".replace(".", ",")
+            gravar()
+        i += 1
+    print(f"    Medidas gravadas em {arq}")
+    return True
+
+
 def fatores(passos):
     """Fator por pé = mediana de real / sistema (sem outliers); com < 3 passos de um pé usa os dois."""
     def mediana_razao(v):

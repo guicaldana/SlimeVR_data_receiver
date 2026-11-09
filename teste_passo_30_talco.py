@@ -7,10 +7,12 @@ Script à parte. Mesma coleta e mesma planilha do teste_calibracao_passo.py, mas
      [Enter] começa, [Enter] quando a pessoa parar no fim com os pés juntos. A gravação termina.
 No fim salva pegadas.csv na pasta da coleta (um passo detectado por linha, coluna real_cm vazia).
 
-Meça cada pegada com fita (borda de trás do calcanhar até a borda de trás do calcanhar da
-pegada seguinte, na ordem), preencha real_cm e rode:
+Depois da captura o programa pergunta, no terminal, a medida da fita de cada passo, na ordem
+(borda de trás do calcanhar até a borda de trás do calcanhar da pegada seguinte). Dá para parar
+com 'f' e continuar depois; cada resposta já fica gravada no pegadas.csv:
 
-    uv run python teste_passo_30_talco.py --analisar dados/debug_casa/<pasta>
+    uv run python teste_passo_30_talco.py --medir dados/debug_casa/<pasta>     # continua as medidas
+    uv run python teste_passo_30_talco.py --analisar dados/debug_casa/<pasta>  # só refaz a análise
 
 A análise mostra, por pé e passo a passo, o erro do sistema contra a fita (sem fator) e com um
 fator por pé calculado SEM o próprio passo (deixa-um-fora), para o ajuste não validar a si mesmo.
@@ -38,6 +40,11 @@ def _uma_caminhada():
     T._caminhada(T.ETAPA_CALIB, f"CAMINHADA DE {DIST_CM:.0f} cm ({N_PEGADAS} pegadas, {N_PEGADAS // 2} de cada pé)", DIST_CM)
     print("\n    Caminhada concluída. Encerrando a gravação... (meça as pegadas antes de limpar)")
     cp.roteiro_terminou = True
+
+
+def medir_e_analisar(pasta):
+    if T.digitar_medidas(pasta):
+        analisar(pasta)
 
 
 cp.caminhada_calibracao_passo = _uma_caminhada
@@ -108,7 +115,11 @@ def analisar(pasta):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Caminhada de 30 cm com talco: sistema x pegadas medidas.")
     ap.add_argument("--analisar", metavar="PASTA", help="analisa o pegadas.csv preenchido de uma coleta")
+    ap.add_argument("--medir", metavar="PASTA", help="continua a digitar as medidas da fita de uma coleta")
     args = ap.parse_args()
+    if args.medir:
+        medir_e_analisar(args.medir)
+        sys.exit(0)
     if args.analisar:
         analisar(args.analisar)
         sys.exit(0)
@@ -119,3 +130,6 @@ if __name__ == "__main__":
     print(f"Os arquivos desta coleta vão para {pasta}")
     print(f"Prepare o circuito de {DIST_CM:.0f} cm com {N_PEGADAS} marcas e talco na sola dos dois pés.")
     cp.main()
+    if os.path.exists(os.path.join(pasta, T.NOME_PEGADAS)):
+        input("\n    [Enter] para digitar as medidas das pegadas (ou feche e use --medir depois): ")
+        medir_e_analisar(pasta)
