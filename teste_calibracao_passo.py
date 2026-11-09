@@ -39,6 +39,7 @@ import calculo_passo as cp
 ETAPA_CALIB = "calibracao_passo"
 ETAPA_TESTE = "teste_passo"
 NOME_PEGADAS = "pegadas.csv"
+NOME_SCRIPT = "teste_calibracao_passo.py"   # aparece na instrução do --analisar
 FATOR_LIMITES = (0.6, 1.4)
 
 cp.PEDIR_PARTICIPANTE = False   # sem cadastro
@@ -104,10 +105,10 @@ def _salvar_pegadas(pes, comprimentos):
     n_c = sum(1 for l in linhas if l[0] == ETAPA_CALIB)
     n_t = len(linhas) - n_c
     print("\n" + "=" * 90)
-    print(f"  📝 Passos detectados: calibração {n_c}, teste {n_t}. Planilha: {arq}")
+    print(f"  📝 Passos detectados: {n_c}" + (f" na calibração, {n_t} no teste" if n_t else "") + f". Planilha: {arq}")
     print("     Meça as pegadas (calcanhar a calcanhar, na ordem) e preencha real_cm.")
     print("     Se o número de pegadas não bater com o de passos, deixe real_cm vazio onde não souber.")
-    print(f"     Depois: uv run python teste_calibracao_passo.py --analisar \"{cp.PASTA_COLETA}\"")
+    print(f"     Depois: uv run python {NOME_SCRIPT} --analisar \"{cp.PASTA_COLETA}\"")
     print("=" * 90)
 
 
