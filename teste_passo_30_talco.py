@@ -7,8 +7,10 @@ Script à parte. Mesma coleta e mesma planilha do teste_calibracao_passo.py, mas
      [Enter] começa, [Enter] quando a pessoa parar no fim com os pés juntos. A gravação termina.
 No fim salva pegadas.csv na pasta da coleta (um passo detectado por linha, coluna real_cm vazia).
 
-Depois da captura o programa pergunta, no terminal, a medida da fita de cada passo, na ordem
-(borda de trás do calcanhar até a borda de trás do calcanhar da pegada seguinte). Dá para parar
+Depois da captura o programa pergunta, no terminal, o d de cada pegada: distância da borda de
+trás da placa de EVA até a borda de trás do calcanhar marcado no talco, medida reta na direção da
+caminhada. O passo é calculado sozinho: passo = espaçamento + d (atual) − d (anterior), com o
+espaçamento entre as bordas de trás das placas (30 cm, ou o medido daquele par). Dá para parar
 com 'f' e continuar depois; cada resposta já fica gravada no pegadas.csv:
 
     uv run python teste_passo_30_talco.py --medir dados/debug_casa/<pasta>     # continua as medidas
@@ -21,6 +23,7 @@ Resultado em analise_pegadas_30.txt e analise_pegadas_30.json.
     uv run python teste_passo_30_talco.py               # coleta
 """
 import argparse
+import csv
 import json
 import os
 import sys
@@ -42,8 +45,91 @@ def _uma_caminhada():
     cp.roteiro_terminou = True
 
 
+ESPACAMENTO_PADRAO_CM = 30.0
+
+
+def digitar_d(pasta):
+    """Pede o d de cada pegada (borda de trás da placa até o calcanhar no talco) e calcula o passo:
+    passo k = espaçamento + d_k − d_(k−1). A pegada 0 é o calcanhar de partida (pé de trás, parado).
+    Resposta: "6,5" ou "6,5 31,2" (o segundo número é o espaçamento deste par, se não for o padrão).
+    Enter vazio = sem medida; v = volta; f = para e continua depois (--medir)."""
+    arq = os.path.join(pasta, T.NOME_PEGADAS)
+    arq_cfg = os.path.join(pasta, "pegadas_placas.json")
+    with open(arq, encoding="utf-8-sig") as f:
+        linhas = list(csv.reader(f, delimiter=";"))
+    cab, dados = linhas[0], linhas[1:]
+    for c in ("d_cm", "espacamento_cm"):
+        if c not in cab:
+            cab.append(c)
+            for l in dados:
+                l.append("")
+    ir, idd, iesp = cab.index("real_cm"), cab.index("d_cm"), cab.index("espacamento_cm")
+    cfg = {}
+    if os.path.exists(arq_cfg):
+        with open(arq_cfg, encoding="utf-8") as f:
+            cfg = json.load(f)
+
+    def gravar():
+        d_ant = cfg.get("d0_cm")
+        for l in dados:
+            d, e = T._num(l[idd]), T._num(l[iesp])
+            l[ir] = f"{e + d - d_ant:.1f}".replace(".", ",") if (d is not None and d_ant is not None and e is not None) else ""
+            d_ant = d
+        with open(arq, "w", newline="", encoding="utf-8-sig") as f:
+            csv.writer(f, delimiter=";").writerows([cab] + dados)
+        with open(arq_cfg, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+
+    print("\n" + "=" * 90)
+    print("  📏 MEDIDAS: d = borda de trás da placa até a borda de trás do calcanhar no talco (cm)")
+    print("     Meça reto, na direção da caminhada. Use a marca do talco, não o desenho da placa.")
+    print("     Digite \"d\" ou \"d espaçamento\" (se este par de placas não estiver a 30 cm).")
+    print("     Enter vazio = sem medida   v = volta   f = para e continua depois")
+    print("=" * 90)
+    if "espacamento_cm" not in cfg:
+        r = input(f"    Espaçamento padrão entre as bordas de trás das placas (cm) [{ESPACAMENTO_PADRAO_CM:.0f}]: ").strip()
+        cfg["espacamento_cm"] = T._num(r) if T._num(r) else ESPACAMENTO_PADRAO_CM
+    # passo -1 = pegada de partida; depois uma pegada por passo detectado
+    i = -1 if "d0_cm" not in cfg else next((k for k, l in enumerate(dados) if not l[idd].strip() and not l[iesp].strip()), len(dados))
+    while i < len(dados):
+        if i == -1:
+            pergunta = "    Pegada de PARTIDA (calcanhar de trás, parado) — d"
+            atual = cfg.get("d0_cm")
+        else:
+            l = dados[i]
+            pergunta = f"    Passo {l[1]:>2s} pé {l[2]} (sistema {l[4]} cm) — d"
+            atual = T._num(l[idd])
+        extra = f" [{atual:.1f}]".replace(".", ",") if atual is not None else ""
+        r = input(f"{pergunta}{extra}: ").strip().lower()
+        if r == "f":
+            gravar()
+            print(f"    Parado. Para continuar: uv run python teste_passo_30_talco.py --medir \"{pasta}\"")
+            return False
+        if r == "v":
+            i = max(-1, i - 1)
+            continue
+        partes = r.replace(";", " ").split()
+        d = T._num(partes[0]) if partes else None
+        e = T._num(partes[1]) if len(partes) > 1 else cfg["espacamento_cm"]
+        if partes and (d is None or d < 0 or e is None or e <= 0):
+            print("    Valor inválido. Ex.: 6,5   ou   6,5 31,2")
+            continue
+        if i == -1:
+            cfg["d0_cm"] = d
+        else:
+            dados[i][idd] = f"{d:.1f}".replace(".", ",") if d is not None else ""
+            dados[i][iesp] = f"{e:.1f}".replace(".", ",") if d is not None else "-"
+        gravar()
+        if i >= 0 and dados[i][ir]:
+            print(f"      passo = {dados[i][ir]} cm")
+        i += 1
+    gravar()
+    print(f"    Medidas gravadas em {arq}")
+    return True
+
+
 def medir_e_analisar(pasta):
-    if T.digitar_medidas(pasta):
+    if digitar_d(pasta):
         analisar(pasta)
 
 
