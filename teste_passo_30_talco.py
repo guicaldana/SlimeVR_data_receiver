@@ -15,6 +15,11 @@ com 'f' e continuar depois; cada resposta já fica gravada no pegadas.csv:
 
     uv run python teste_passo_30_talco.py --medir dados/debug_casa/<pasta>     # continua as medidas
     uv run python teste_passo_30_talco.py --analisar dados/debug_casa/<pasta>  # só refaz a análise
+    uv run python teste_passo_30_talco.py --reprocessar dados/debug_casa/<pasta>  # refaz os passos (coletas antigas)
+
+O comprimento do passo sai de duas formas, e a análise compara as duas com a fita:
+  - máximo do apoio: maior distância à frente-atrás entre os pés enquanto os dois estão no chão;
+  - toque do calcanhar: distância no instante do pico de aceleração da IMU do pé (25 ms de ajuste).
 
 A análise mostra, por pé e passo a passo, o erro do sistema contra a fita (sem fator) e com um
 fator por pé calculado SEM o próprio passo (deixa-um-fora), para o ajuste não validar a si mesmo.
@@ -150,6 +155,47 @@ def _resumo(d):
             "dp_cm": dp, "limites_95_cm": [float(d.mean() - 1.96 * dp), float(d.mean() + 1.96 * dp)]}
 
 
+METODOS = (("sistema", "MÁXIMO DO APOIO (distância máxima entre os pés no platô)"),
+           ("toque", "TOQUE DO CALCANHAR (distância no pico de aceleração da IMU do pé)"))
+
+
+def _analisar_metodo(passos, chave):
+    """Tabela por pé e passo a passo para uma definição do comprimento (chave = 'sistema' ou 'toque')."""
+    passos = [dict(p, sistema=p[chave]) for p in passos if p.get(chave) is not None and p[chave] == p[chave]]
+    print(f"  Passos com medida: {len(passos)}")
+    if len(passos) < 3:
+        print("  Poucos passos com as duas medidas.")
+        return None
+    linhas, res = [], {}
+    for p in passos:
+        outros = [q for q in passos if q is not p and q["pe"] == p["pe"]]
+        f_loo = _fator(outros) or _fator([q for q in passos if q is not p]) or 1.0
+        linhas.append((p, f_loo, p["sistema"] * f_loo))
+    for pe in ("E", "D", "ambos"):
+        v = [l for l in linhas if pe == "ambos" or l[0]["pe"] == pe]
+        if not v:
+            continue
+        real = np.array([l[0]["real"] for l in v]); sis = np.array([l[0]["sistema"] for l in v])
+        res[pe] = {"real_medio_cm": float(real.mean()), "sistema_medio_cm": float(sis.mean()),
+                   "fator_todos": _fator([l[0] for l in v]),
+                   "correlacao": float(np.corrcoef(real, sis)[0, 1]) if len(v) > 2 else float("nan"),
+                   "sem_fator": _resumo(sis - real),
+                   "com_fator_deixa_um_fora": _resumo([l[2] - l[0]["real"] for l in v])}
+    print(f"\n  {'pé':6s} {'n':>3s} {'fita':>6s} {'sistema':>8s} {'fator':>6s} {'r':>5s} | {'erro sem':>8s} {'|erro|':>6s} | "
+          f"{'erro com':>8s} {'|erro|':>6s} {'limites 95% (com)':>18s}")
+    for pe, x in res.items():
+        s, c = x["sem_fator"], x["com_fator_deixa_um_fora"]
+        fat = f"{x['fator_todos']:.3f}" if x["fator_todos"] else "  -  "
+        print(f"  {pe:6s} {s['n']:3d} {x['real_medio_cm']:6.1f} {x['sistema_medio_cm']:8.1f} {fat:>6s} {x['correlacao']:5.2f} | "
+              f"{s['erro_medio_cm']:+8.1f} {s['erro_abs_medio_cm']:6.1f} | {c['erro_medio_cm']:+8.1f} "
+              f"{c['erro_abs_medio_cm']:6.1f}   {c['limites_95_cm'][0]:+5.1f} a {c['limites_95_cm'][1]:+5.1f}")
+    print("\n  Passo a passo (fator de cada linha calculado sem ela):")
+    for p, fl, c in linhas:
+        print(f"    {p['passo']:>3s} pé {p['pe']}: fita {p['real']:5.1f}  sistema {p['sistema']:5.1f} "
+              f"(erro {p['sistema'] - p['real']:+5.1f})  com fator {fl:.3f}: {c:5.1f} (erro {c - p['real']:+5.1f})")
+    return res
+
+
 def analisar(pasta):
     passos = [p for p in T.ler_pegadas(pasta) if p["caminhada"] == T.ETAPA_CALIB]
     arq_txt = os.path.join(pasta, "analise_pegadas_30.txt")
@@ -157,52 +203,87 @@ def analisar(pasta):
     with open(arq_txt, "w", encoding="utf-8") as f:
         sys.stdout = cp._Tee(f, terminal)
         try:
-            print("=" * 90)
-            print(f"  👣 PASSO DE {DIST_CM:.0f} cm COM PEGADAS MEDIDAS (erro = sistema − fita, em cm)")
-            print("=" * 90)
-            print(f"  Passos com medida: {len(passos)}")
-            if len(passos) < 3:
-                print("  Poucos passos com real_cm preenchido.")
-                return
-            linhas, res = [], {}
-            for p in passos:
-                outros = [q for q in passos if q is not p and q["pe"] == p["pe"]]
-                f_loo = _fator(outros) or _fator([q for q in passos if q is not p]) or 1.0
-                linhas.append((p, f_loo, p["sistema"] * f_loo))
-            for pe in ("E", "D", "ambos"):
-                v = [l for l in linhas if pe == "ambos" or l[0]["pe"] == pe]
-                if not v:
+            todos = {}
+            for chave, titulo in METODOS:
+                print("=" * 90)
+                print(f"  👣 PASSO DE {DIST_CM:.0f} cm x PEGADAS: {titulo}")
+                print("     (erro = sistema − fita, em cm; r = correlação fita x sistema)")
+                print("=" * 90)
+                if chave == "toque" and not any(p.get("toque") is not None for p in passos):
+                    print("  Esta coleta não tem o comprimento no toque. Rode com --reprocessar PASTA para calcular.")
                     continue
-                res[pe] = {"real_medio_cm": float(np.mean([l[0]["real"] for l in v])),
-                           "sistema_medio_cm": float(np.mean([l[0]["sistema"] for l in v])),
-                           "fator_todos": _fator([l[0] for l in v]),
-                           "sem_fator": _resumo([l[0]["sistema"] - l[0]["real"] for l in v]),
-                           "com_fator_deixa_um_fora": _resumo([l[2] - l[0]["real"] for l in v])}
-            print(f"\n  {'pé':6s} {'n':>3s} {'fita':>6s} {'sistema':>8s} {'fator':>6s} | {'erro sem':>8s} {'|erro|':>6s} | "
-                  f"{'erro com':>8s} {'|erro|':>6s} {'limites 95% (com)':>18s}")
-            for pe, x in res.items():
-                s, c = x["sem_fator"], x["com_fator_deixa_um_fora"]
-                fat = f"{x['fator_todos']:.3f}" if x["fator_todos"] else "  -  "
-                print(f"  {pe:6s} {s['n']:3d} {x['real_medio_cm']:6.1f} {x['sistema_medio_cm']:8.1f} {fat:>6s} | "
-                      f"{s['erro_medio_cm']:+8.1f} {s['erro_abs_medio_cm']:6.1f} | {c['erro_medio_cm']:+8.1f} "
-                      f"{c['erro_abs_medio_cm']:6.1f}   {c['limites_95_cm'][0]:+5.1f} a {c['limites_95_cm'][1]:+5.1f}")
-            print("\n  Passo a passo (fator de cada linha calculado sem ela):")
-            for p, fl, c in linhas:
-                print(f"    {p['passo']:>3s} pé {p['pe']}: fita {p['real']:5.1f}  sistema {p['sistema']:5.1f} "
-                      f"(erro {p['sistema'] - p['real']:+5.1f})  com fator {fl:.3f}: {c:5.1f} (erro {c - p['real']:+5.1f})")
+                r = _analisar_metodo(passos, chave)
+                if r:
+                    todos[chave] = r
+                print()
+            if len(todos) == 2:
+                print("=" * 90)
+                print("  COMPARAÇÃO (ambos os pés): |erro| sem fator e com fator, erro médio de cada pé sem fator")
+                for chave, titulo in METODOS:
+                    x = todos[chave]
+                    print(f"    {titulo.split(' (')[0]:22s}: |erro| {x['ambos']['sem_fator']['erro_abs_medio_cm']:.1f} -> "
+                          f"{x['ambos']['com_fator_deixa_um_fora']['erro_abs_medio_cm']:.1f} cm   "
+                          f"E {x['E']['sem_fator']['erro_medio_cm']:+.1f}  D {x['D']['sem_fator']['erro_medio_cm']:+.1f}")
             print("\n  O fator da coluna 'fator' usa todos os passos do pé; é o que iria para as próximas coletas.")
             with open(os.path.join(pasta, "analise_pegadas_30.json"), "w", encoding="utf-8") as fj:
-                json.dump(res, fj, indent=2, ensure_ascii=False)
+                json.dump({"maximo_do_apoio": todos.get("sistema"), "toque_do_calcanhar": todos.get("toque")},
+                          fj, indent=2, ensure_ascii=False)
             print(f"\n  Salvo em {arq_txt} e analise_pegadas_30.json")
         finally:
             sys.stdout = terminal
+
+
+def reprocessar(pasta):
+    """Refaz os passos de uma coleta salva com o código atual (por exemplo, para ter o comprimento no
+    toque em coletas antigas). Mantém as medidas já digitadas no pegadas.csv e roda a análise."""
+    import cadeia_pernas
+    with open(os.path.join(pasta, "dados_brutos_entrada.json"), encoding="utf-8") as f:
+        e = json.load(f)
+    for tid, d in e["trackers"].items():
+        if d:
+            n = min(len(v) for v in d.values())
+            cp.dados[tid] = {k: list(v)[:n] for k, v in d.items()}
+    for lado, d in e["imu"].items():
+        n = min(len(v) for v in d.values())
+        cp.dados_imu[lado] = {k: list(v)[:n] for k, v in d.items()}
+    for seg, d in e.get("quats", {}).items():
+        n = min(len(d["t"]), len(d["q"]))
+        cp.dados_quat[seg] = {"t": d["t"][:n], "q": [tuple(q) for q in d["q"][:n]]}
+    c = e["calibracao"]
+    for k in ("dist_qp_e_ref", "dist_qp_d_ref", "yq_ref", "chao_esq_ref", "chao_dir_ref",
+              "limiar_ruido_chao", "pitch_tronco_ref"):
+        if c.get(k) is not None:
+            setattr(cp, k, c[k])
+    cp.calibrado = True
+    if c.get("cadeia_comprimentos") and c.get("cadeia_vetor_local"):
+        cad = cadeia_pernas.CadeiaPernas(c["cadeia_comprimentos"])
+        cad.vetor_local = {k: np.array(v) for k, v in c["cadeia_vetor_local"].items()}
+        cad.calibrado = True
+        cp.cadeia = cad
+    else:
+        cp.cadeia = None
+    if e.get("ganhos_metodo"):
+        cp.ganhos_metodo = {k: tuple(v) for k, v in e["ganhos_metodo"].items()}
+    cp.ganho_esq, cp.ganho_dir = e.get("ganho_esq", 1.0), e.get("ganho_dir", 1.0)
+    cp.fases_sessao[:] = [tuple(f) for f in (e.get("fases") or [])]
+    cp.definir_pasta_saida(pasta)
+    cp.salvar_dados_brutos = lambda: None   # não regrava as entradas originais
+    cp.MOSTRAR_GRAFICOS = False
+    cp.rodando = False
+    print(f"Reprocessando {pasta}")
+    cp.processar_coleta()
+    analisar(pasta)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Caminhada de 30 cm com talco: sistema x pegadas medidas.")
     ap.add_argument("--analisar", metavar="PASTA", help="analisa o pegadas.csv preenchido de uma coleta")
     ap.add_argument("--medir", metavar="PASTA", help="continua a digitar as medidas da fita de uma coleta")
+    ap.add_argument("--reprocessar", metavar="PASTA", help="refaz os passos de uma coleta salva (mantém as medidas) e analisa")
     args = ap.parse_args()
+    if args.reprocessar:
+        reprocessar(args.reprocessar)
+        sys.exit(0)
     if args.medir:
         medir_e_analisar(args.medir)
         sys.exit(0)

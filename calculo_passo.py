@@ -154,6 +154,9 @@ FATOR_PASSO_LIMITES = (0.6, 1.4)
 fator_passo = {"ESQ": 1.0, "DIR": 1.0}
 calibracao_passo = {}           # resumo da calibração do passo (vai para o relatório)
 comprimentos_brutos_m = None    # comprimento de cada passo sem o fator (para o CSV)
+# As duas definições do comprimento ficam disponíveis (11/11): no TOQUE do calcanhar (instante do pico de
+# aceleração da IMU do pé) e no MÁXIMO do platô (COMPRIMENTO_PELO_PLATO). O CSV e o relatório mostram as duas.
+comprimento_toque_por_t = {}    # tempo do passo -> comprimento no toque (m); só passos com impacto da IMU
 MOSTRAR_GRAFICOS = True       # abre as janelas dos gráficos no fim (os PNG são salvos de qualquer jeito)
 PASTA_COLETA = "dados"
 PARTICIPANTE = None           # {"nome": ..., "altura_cm": ...}
@@ -1040,6 +1043,10 @@ def comprimento_pelo_plato(t, d_ap, tempos, comprimentos, impactos, pes, projeco
     - Um platô sem detecção vira um passo marcado com '*' (sem impacto da IMU),
       no instante em que o pé atinge o máximo.
     - Detecções fora de qualquer platô (pés lado a lado) são descartadas."""
+    comprimento_toque_por_t.clear()
+    for k, t_k in enumerate(tempos):
+        if "*" not in str(pes[k]):
+            comprimento_toque_por_t[round(float(t_k), 3)] = float(comprimentos[k])
     platos = platos_anteroposteriores(t, d_ap)
     if not platos:
         return tempos, comprimentos, impactos, pes, projecoes
@@ -1066,6 +1073,14 @@ def comprimento_pelo_plato(t, d_ap, tempos, comprimentos, impactos, pes, projeco
     novos.sort(key=lambda x: x[0])
     tt, cc, ii, pp, jj = zip(*novos)
     return np.array(tt), np.array(cc), np.array(ii), np.array(pp), np.array(jj)
+
+
+def comprimento_no_toque(t_passo):
+    """Comprimento (m) no toque do calcanhar do passo do instante t_passo; nan se o passo não teve
+    impacto da IMU. Sem o platô ligado, o comprimento do passo já é o do toque."""
+    if not COMPRIMENTO_PELO_PLATO:
+        return None
+    return comprimento_toque_por_t.get(round(float(t_passo), 3), float("nan"))
 
 
 def calcular_alturas_passos(t, tempos_impactos, pes_impactos, elevacao_esq_cm, elevacao_dir_cm):
@@ -1243,7 +1258,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
         reais = reais_m or {}
         escritor.writerow([
             "Participante", "Altura_participante_cm", "Passo", "Etapa", "Tempo_HeelStrike_s", "Pe_Impacto",
-            "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_sem_fator_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
+            "Impacto_IMU_ms2", "Comprimento_m", "Comprimento_sem_fator_m", "Comprimento_toque_m", "Comprimento_por_altura", "Comprimento_real_marcas_m",
             "Clearance_Solado_cm", "Elev_Tornozelo_cm", "Tronco_graus", "Outlier"
         ])
         for i, (t_p, d_p, imp_p, cl_p, tn_p, pe_p, tr_p) in enumerate(zip(
@@ -1253,6 +1268,7 @@ def gerar_relatorio_e_graficos(t_passo, d_passo_ap, larg_base_m,
                 nome_p, f"{altura_p:.1f}" if altura_p else "", i+1, etapas_passos[i], f"{t_p:.3f}", pe_p,
                 f"{imp_p:.2f}", f"{d_p:.3f}",
                 f"{comprimentos_brutos_m[i]:.3f}" if comprimentos_brutos_m is not None and i < len(comprimentos_brutos_m) else f"{d_p:.3f}",
+                (lambda c: "" if c is not None and c != c else f"{(d_p if c is None else c):.3f}")(comprimento_no_toque(t_p)),
                 f"{d_p * 100 / altura_p:.3f}" if altura_p else "",
                 f"{reais[i]:.3f}" if i in reais else "",
                 f"{cl_p:.2f}", f"{tn_p:.2f}", f"{tr_p:.2f}", "NAO" if mascara_validos[i] else "SIM"

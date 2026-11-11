@@ -85,8 +85,11 @@ def _sem_fator(tempos, comprimentos, impactos, pes, projecoes):
 
 
 def _salvar_pegadas(pes, comprimentos):
-    """Escreve pegadas.csv: um passo detectado por linha, para preencher real_cm."""
+    """Escreve pegadas.csv: um passo detectado por linha, para preencher real_cm. sistema_cm é o máximo
+    do platô; sistema_toque_cm é a distância no toque do calcanhar (pico de aceleração da IMU do pé).
+    Se o arquivo já existe (reprocessamento), mantém as medidas digitadas dos passos que casam pelo tempo."""
     t, comp, pp = getattr(_sem_fator, "passos", (np.zeros(0), np.zeros(0), []))
+    cab = ["caminhada", "passo", "pe_da_frente", "t_s", "sistema_cm", "real_cm", "sistema_toque_cm"]
     linhas = []
     for etapa in (ETAPA_CALIB, ETAPA_TESTE):
         j = [(a, b) for n, a, b in cp.fases_sessao if n == etapa]
@@ -95,12 +98,28 @@ def _salvar_pegadas(pes, comprimentos):
         a, b = j[0]
         idx = np.flatnonzero((t >= a) & (t <= b + 1.0))
         for k, i in enumerate(idx, 1):
+            tq = cp.comprimento_no_toque(t[i])
+            tq = comp[i] if tq is None else tq
             linhas.append([etapa, k, "E" if "ESQ" in pp[i] else "D", f"{t[i]:.2f}",
-                           f"{comp[i] * 100:.1f}".replace(".", ","), ""])
+                           f"{comp[i] * 100:.1f}".replace(".", ","), "",
+                           "" if tq != tq else f"{tq * 100:.1f}".replace(".", ",")])
     arq = os.path.join(cp.PASTA_COLETA, NOME_PEGADAS)
+    if os.path.exists(arq):
+        with open(arq, encoding="utf-8-sig") as f:
+            antigas = list(csv.reader(f, delimiter=";"))
+        cab_old, old = antigas[0], antigas[1:]
+        extras = [c for c in cab_old if c not in cab]
+        cab = cab + extras
+        for l in linhas:
+            casa = [o for o in old if o[0] == l[0] and abs(float(o[3]) - float(l[3])) < 0.06]
+            o = casa[0] if casa else None
+            l[5] = o[cab_old.index("real_cm")] if o else ""
+            l += [o[cab_old.index(c)] if o and cab_old.index(c) < len(o) else "" for c in extras]
+        if len(old) != len(linhas) or any(not [o for o in old if o[0] == l[0] and abs(float(o[3]) - float(l[3])) < 0.06] for l in linhas):
+            print("    ⚠ Os passos detectados agora não casam todos com os do arquivo antigo: confira as medidas.")
     with open(arq, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
-        w.writerow(["caminhada", "passo", "pe_da_frente", "t_s", "sistema_cm", "real_cm"])
+        w.writerow(cab)
         w.writerows(linhas)
     n_c = sum(1 for l in linhas if l[0] == ETAPA_CALIB)
     n_t = len(linhas) - n_c
@@ -129,7 +148,8 @@ def ler_pegadas(pasta):
             if s is None or real is None or s <= 0 or real <= 0:
                 continue
             passos.append({"caminhada": r["caminhada"].strip(), "passo": r["passo"],
-                           "pe": r["pe_da_frente"].strip().upper()[:1], "sistema": s, "real": real})
+                           "pe": r["pe_da_frente"].strip().upper()[:1], "sistema": s, "real": real,
+                           "toque": _num(r.get("sistema_toque_cm"))})
     return passos
 
 
