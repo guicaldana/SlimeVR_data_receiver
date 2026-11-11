@@ -172,11 +172,11 @@ SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objeto
 ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
 PES_ALTURA = ["ESQ", "DIR"]         # no experimento de altura: pés que sobem nos objetos
 TEMPO_TRANSICAO_S = 3               # no experimento de altura: tempo para subir e para descer o pé
-# Com Enter (11/11): sem tempos de deslocamento, subida e descida. No roteiro, cada medida com o pé
-# em cima do objeto começa quando se aperta Enter e dura TEMPO_MEDIDA_ENTER_S; as etapas de ir,
-# subir, descer e pé no chão deixam de existir. Na calibração da caixa, Enter mede e Enter segue
-# depois de virar ou montar a caixa. False volta aos tempos fixos.
-COM_ENTER = False
+# Com Enter (11/11): sem tempos de deslocamento, subida e descida. Caminhada: Enter começa e Enter
+# termina (pés juntos no fim). Pé no objeto: a medida começa no Enter e dura TEMPO_MEDIDA_ENTER_S;
+# as etapas de ir, subir, descer e pé no chão deixam de existir. Na calibração da caixa, Enter mede
+# e Enter segue depois de virar ou montar a caixa. False volta aos tempos fixos.
+COM_ENTER = True
 TEMPO_MEDIDA_ENTER_S = 3.0
 
 
@@ -2586,29 +2586,52 @@ def _aviso_sonoro(vezes=1):
         print("\a" * vezes, end="", flush=True)
 
 
+def _esperar_enter(texto):
+    global aguardando_enter
+    aguardando_enter = True
+    print(" " * 120, end="\r")
+    try:
+        input(texto)
+    except EOFError:
+        pass
+    aguardando_enter = False
+
+
 def _executar_roteiro_enter():
-    """Roteiro com Enter: só as medidas com o pé em cima do objeto; cada uma começa no Enter."""
-    global etapa_atual, roteiro_terminou, aguardando_enter
-    medidas = [(n, ins) for n, _, ins in ROTEIRO if n.startswith("caixa_")]
-    print(f"\n   📋 Roteiro com Enter: {len(medidas)} medidas de {TEMPO_MEDIDA_ENTER_S:.0f} s.\n")
+    """Roteiro com Enter: sem tempos de ir, subir e descer.
+
+    Caminhada: Enter começa (pessoa parada no início) e Enter termina (pés juntos no fim).
+    Pé no objeto: Enter mede TEMPO_MEDIDA_ENTER_S com o pé já parado em cima."""
+    global etapa_atual, roteiro_terminou
+    etapas = [(n, ins) for n, _, ins in ROTEIRO if n.startswith(("caminhada", "caixa_"))]
+    print(f"\n   📋 Roteiro com Enter: {len(etapas)} etapas.\n")
     obj_anterior = None
-    for i, (nome, instrucao) in enumerate(medidas):
+    for i, (nome, instrucao) in enumerate(etapas):
         if not rodando:
             return
+        if nome.startswith("caminhada"):
+            c = nome.rsplit("_", 1)[-1]
+            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] Vá até o início do CIRCUITO {c}, pé D na marca 0, e fique parado.")
+            _esperar_enter("     Pronto para caminhar? [Enter] para COMEÇAR: ")
+            if not rodando:
+                return
+            _aviso_sonoro(2)
+            print(f"     {instrucao}")
+            t0 = time.time() - tempo_inicial
+            etapa_atual = f"{nome} (Enter termina)"
+            _esperar_enter("     Parou com os pés juntos? [Enter] para TERMINAR: ")
+            fases_sessao.append((nome, t0, time.time() - tempo_inicial))
+            etapa_atual = ""
+            _aviso_sonoro(1)
+            continue
         obj = nome.rsplit("_", 1)[-1]
         if obj != obj_anterior and obj.isdigit() and ALTURAS_TESTE_CM:
             j = int(obj)
             if 1 <= j <= len(ALTURAS_TESTE_CM):
                 print(f"\n\n   === Vá até o objeto de {ALTURAS_TESTE_CM[j - 1]:.1f} cm (tronco reto) ===")
             obj_anterior = obj
-        aguardando_enter = True
-        print(" " * 120, end="\r")
-        print(f"\n   ▶ [{i + 1}/{len(medidas)}] SUBA: {instrucao}")
-        try:
-            input("     Pé em cima, PARADO e tronco reto? [Enter] para medir: ")
-        except EOFError:
-            pass
-        aguardando_enter = False
+        print(f"\n   ▶ [{i + 1}/{len(etapas)}] SUBA: {instrucao}")
+        _esperar_enter("     Pé em cima, PARADO e tronco reto? [Enter] para medir: ")
         if not rodando:
             return
         _aviso_sonoro(2)
@@ -2629,7 +2652,7 @@ def _executar_roteiro_enter():
 def executar_roteiro():
     """Conduz as etapas do ROTEIRO com tempo fixo e guarda o início e o fim de cada uma."""
     global etapa_atual, roteiro_terminou
-    if COM_ENTER and EXPERIMENTO == "altura":
+    if COM_ENTER:
         return _executar_roteiro_enter()
     total = sum(seg for _, seg, _ in ROTEIRO)
     print(f"\n   📋 Roteiro guiado: {len(ROTEIRO)} etapas, {total:.0f} s no total.\n")
