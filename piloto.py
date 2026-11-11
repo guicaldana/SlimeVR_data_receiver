@@ -189,6 +189,8 @@ def montar_roteiro(alturas_cm=None):
             (f"caminhada_reta_{c}", TEMPO_CAMINHADA_S[c],
              f"CIRCUITO {c}: CAMINHE pisando com o calcanhar nas MARCAS, tronco RETO; no fim junte os pés"),
         ]
+    if EXPERIMENTO == "comprimento":   # só os circuitos, sem objetos
+        return r
     alturas = list(alturas_cm or [ALTURA_CAIXA_CM])
     ordem = [j for j in ORDEM_OBJETOS if 1 <= j <= len(alturas)] or list(range(1, len(alturas) + 1))
     reps = REPETICOES_ALTURA if EXPERIMENTO == "altura" else 1
@@ -2611,7 +2613,7 @@ def _executar_roteiro_enter():
             return
         if nome.startswith("caminhada"):
             c = nome.rsplit("_", 1)[-1]
-            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] Vá até o início do CIRCUITO {c}, pé D na marca 0, e fique parado.")
+            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] Talco no calcanhar. Vá até o início do CIRCUITO {c} ({marcas_chao.COMPRIMENTO_FIXO_CM.get(c, '')} cm), calcanhar D na placa 0, e fique parado.")
             _esperar_enter("     Pronto para caminhar? [Enter] para COMEÇAR: ")
             if not rodando:
                 return
@@ -2984,10 +2986,11 @@ def main():
         # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
         anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
         padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
-        print("   Alturas dos objetos de teste:")
-        PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
-                                          for h in padroes]
-        definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
+        if EXPERIMENTO != "comprimento":   # só caminhada: sem objetos
+            print("   Alturas dos objetos de teste:")
+            PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
+                                              for h in padroes]
+            definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
         PARTICIPANTE["experimento"] = EXPERIMENTO
         if EXPERIMENTO == "altura":
             # Familiarização na ordem 1, 2, 3; na rodada de coleta a ordem dos objetos é sorteada
