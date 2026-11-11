@@ -207,14 +207,19 @@ def analisar(pasta):
         linhas.append("")
     todas = [b["atraso_freada_ms"] for r in resultados for b in r["batidas"]]
     if todas:
-        med = float(np.median(todas))
         linhas.append(f"DOIS PÉS: freada − pico {_resumo(todas)}")
-        if abs(med) <= 60:
-            linhas.append("Leitura: aceleração e posição chegam praticamente juntas (até ~60 ms). "
+    if resultados:
+        # a leitura usa a correlação cruzada (etapa inteira), que não depende de batidas fracas
+        xc = float(np.median([r["xcorr_atraso_ms"] for r in resultados]))
+        if abs(xc) <= 60:
+            linhas.append(f"Leitura (correlação cruzada, {xc:+.0f} ms): aceleração e posição chegam praticamente juntas. "
                           "O atraso de 0,3–1 s visto na caminhada não vem do nosso programa.")
-        else:
-            linhas.append(f"Leitura: a posição chega ~{med:.0f} ms depois da aceleração mesmo com o pé parado. "
+        elif xc > 0:
+            linhas.append(f"Leitura (correlação cruzada): a posição chega ~{xc:.0f} ms DEPOIS da aceleração mesmo com o pé parado. "
                           "Há atraso entre os dois caminhos de dados (SlimeVR/OSC ou programa).")
+        else:
+            linhas.append(f"Leitura (correlação cruzada): a posição aparece ~{-xc:.0f} ms ANTES da aceleração. "
+                          "Confira o gráfico: costuma indicar batidas fracas ou mal detectadas.")
     texto = "\n".join(linhas)
     print("\n" + texto)
     with open(os.path.join(pasta, "analise_batida.txt"), "w", encoding="utf-8") as f:
