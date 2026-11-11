@@ -2599,6 +2599,25 @@ def _esperar_enter(texto):
     aguardando_enter = False
 
 
+def _contar_passos_caminhada(circuito, t0, t1):
+    """Conta os passos desta caminhada logo no fim dela (platôs à frente-atrás), para repetir na hora se faltar."""
+    try:
+        with lock:
+            cop = {k: {c: list(v) for c, v in dados[k].items()} for k in
+                   (TORNOZELO_ESQ, TORNOZELO_DIR, TRACKER_QUADRIL, TRACKER_COXA_ESQ, TRACKER_COXA_DIR)}
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            s = calcular_sinais_completos(cop[TORNOZELO_ESQ], cop[TORNOZELO_DIR], cop[TRACKER_QUADRIL],
+                                          cop[TRACKER_COXA_ESQ], cop[TRACKER_COXA_DIR])
+            platos = platos_anteroposteriores(s[0], s[1])
+        n = sum(1 for p in platos if t0 <= p["t_max"] <= t1 + 0.5)
+        esperado = marcas_chao.PEGADAS_POR_CIRCUITO
+        aviso = "" if abs(n - esperado) <= 1 else "  ⚠ diferente do esperado: confira as pegadas e, se preciso, repita este circuito"
+        print(f"\n     👣 Circuito {circuito}: {n} passos detectados (esperado {esperado}, mais o de parada).{aviso}")
+    except Exception as e:
+        print(f"\n     (não consegui contar os passos agora: {e})")
+
+
 def _executar_roteiro_enter():
     """Roteiro com Enter: sem tempos de ir, subir e descer.
 
@@ -2625,6 +2644,7 @@ def _executar_roteiro_enter():
             fases_sessao.append((nome, t0, time.time() - tempo_inicial))
             etapa_atual = ""
             _aviso_sonoro(1)
+            _contar_passos_caminhada(c, t0, time.time() - tempo_inicial)
             continue
         obj = nome.rsplit("_", 1)[-1]
         if obj != obj_anterior and obj.isdigit() and ALTURAS_TESTE_CM:
