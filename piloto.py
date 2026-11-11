@@ -237,10 +237,14 @@ NOME_ARQUIVO_RELATORIO = os.path.join("dados", "relatorio.txt")
 # em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>/ (ver participante.py).
 PEDIR_PARTICIPANTE = True
 LER_ALTURA_SLIMEVR = True     # no cadastro, sugere a altura configurada no SlimeVR (Enter aceita)
-# Comprimento do passo: máximo da distância anteroposterior entre os pés em cada
-# platô (o pé da frente fica à frente até o outro passar). O contato do calcanhar
-# (aceleração) só marca o tempo do passo. False volta ao valor no instante do contato.
+# Comprimento do passo: máximo da distância anteroposterior entre os pés logo depois do
+# contato do calcanhar (aceleração da IMU do pé), dentro do platô em que o pé da frente
+# fica à frente até o outro passar. A janela tolera o atraso entre a IMU (SolarXR) e o OSC.
+# Platô sem contato detectado usa o máximo do platô inteiro e fica marcado com '*'.
+# COMPRIMENTO_APOS_TOQUE_S = None volta ao máximo do platô inteiro (até 11/11);
+# COMPRIMENTO_PELO_PLATO = False volta ao valor no instante do contato.
 COMPRIMENTO_PELO_PLATO = True
+COMPRIMENTO_APOS_TOQUE_S = 0.3   # janela (s) depois do contato do calcanhar
 PLATO_PERCENTIL = 100         # 100 = máximo do platô; 80 deixa o valor um pouco menor
 PLATO_LIMIAR_M = 0.05         # abaixo disso os pés estão lado a lado (fora do platô)
 PLATO_DURACAO_MIN_S = 0.15
@@ -1313,9 +1317,23 @@ def platos_anteroposteriores(t, d_ap):
     return platos
 
 
+def _maximo_apos_toque(t, d, plato, t_toque, janela_s, padrao):
+    """Máximo da distância do pé da frente entre o contato do calcanhar e janela_s depois,
+    sem sair do platô. Sem amostras na janela, devolve o valor padrão (máximo do platô)."""
+    sinal = 1.0 if plato["pe"] == "ESQ" else -1.0
+    t0 = max(t_toque, plato["t0"])
+    t1 = min(t_toque + janela_s, plato["t1"])
+    m = (t >= t0) & (t <= t1)
+    if not np.any(m):
+        return padrao
+    return float(max(np.max(sinal * d[m]), 0.0)) or padrao
+
+
 def comprimento_pelo_plato(t, d_ap, tempos, comprimentos, impactos, pes, projecoes):
     """Troca o comprimento de cada passo pelo valor do platô em que ele caiu.
 
+    - Com contato do calcanhar detectado, o comprimento é o máximo da distância
+      nos COMPRIMENTO_APOS_TOQUE_S segundos depois do contato, dentro do platô.
     - O pé do passo passa a ser o do platô (o que ficou à frente).
     - Duas detecções no mesmo platô viram um passo só (fica a primeira).
     - Um platô sem detecção vira um passo marcado com '*' (sem impacto da IMU),
@@ -1340,8 +1358,11 @@ def comprimento_pelo_plato(t, d_ap, tempos, comprimentos, impactos, pes, projeco
         if i in usados:
             k = usados[i]
             imu = "*" not in str(pes[k])
-            novos.append((float(tempos[k]), p["comprimento_m"], float(impactos[k]),
-                          p["pe"] + ("" if imu else "*"), sinal * p["comprimento_m"]))
+            comp = p["comprimento_m"]
+            if imu and COMPRIMENTO_APOS_TOQUE_S:
+                comp = _maximo_apos_toque(t, d, p, float(tempos[k]), COMPRIMENTO_APOS_TOQUE_S, comp)
+            novos.append((float(tempos[k]), comp, float(impactos[k]),
+                          p["pe"] + ("" if imu else "*"), sinal * comp))
         else:
             novos.append((p["t_max"], p["comprimento_m"], 0.0, p["pe"] + "*", sinal * p["comprimento_m"]))
     novos.sort(key=lambda x: x[0])
