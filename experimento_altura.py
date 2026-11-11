@@ -12,9 +12,7 @@ Usa os mesmos cálculos e o mesmo cadastro do piloto.py:
   3. em cada objeto, os dois pés sobem alternados (E, depois D), REPETICOES_ALTURA vezes
      cada (tronco reto); o pé que fica no chão é a referência. Só o pé E: PES_ALTURA = ["ESQ"].
      Na rodada de coleta a ordem dos objetos é sorteada;
-  4. antes do roteiro, um teste rápido da calibração (VERIFICAR_CALIBRACAO): cada pé sobe
-     no objeto de 7 cm (5 s para subir, 3 s medindo, altura em tempo real) e, se o erro passar de 1 cm, o programa pede para refazer
-     o reset do SlimeVR e calibra de novo.
+  4. sem teste da calibração no objeto de 7 cm antes do roteiro (VERIFICAR_CALIBRACAO = False, 11/11).
 Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_altura_<rodada>/, com
 altura_conhecida.csv, altura_objetos.png e relatorio.txt.
 
@@ -42,7 +40,7 @@ piloto.INSTRUCOES_CAIXA = {2: "Monte a PILHA: caixa de 9,4 cm e caixa de 12 cm u
 piloto.TEMPO_MONTAR_CAIXA_S = {2: 20}
 # Teste da calibração antes do roteiro (29/10): o pé sobe no objeto de 7 cm; erro acima de
 # 1 cm pede novo reset do SlimeVR. Na coleta de 29/10 o erro sem esse teste foi de +2,6 cm.
-piloto.VERIFICAR_CALIBRACAO = True
+piloto.VERIFICAR_CALIBRACAO = False   # 11/11: desligado a pedido (sem conferência no objeto de 7 cm)
 piloto.ALTURA_VERIFICACAO_CM = 7.0
 piloto.TOLERANCIA_VERIFICACAO_CM = 1.0
 # Inclinação máxima do tronco com o pé no objeto na conferência. 04/11: ao subir o pé o tronco
