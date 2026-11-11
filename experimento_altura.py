@@ -12,7 +12,9 @@ Usa os mesmos cálculos e o mesmo cadastro do piloto.py:
   3. em cada objeto, os dois pés sobem alternados (E, depois D), REPETICOES_ALTURA vezes
      cada (tronco reto); o pé que fica no chão é a referência. Só o pé E: PES_ALTURA = ["ESQ"].
      Na rodada de coleta a ordem dos objetos é sorteada;
-  4. sem teste da calibração no objeto de 7 cm antes do roteiro (VERIFICAR_CALIBRACAO = False, 11/11).
+  4. tudo com Enter (COM_ENTER): o pé sobe, fica parado e o Enter mede 3 s; sem tempos de
+     deslocamento, subida e descida;
+  5. sem teste da calibração no objeto de 7 cm antes do roteiro (VERIFICAR_CALIBRACAO = False, 11/11).
 Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_altura_<rodada>/, com
 altura_conhecida.csv, altura_objetos.png e relatorio.txt.
 
@@ -49,6 +51,9 @@ piloto.LIMITE_TRONCO_FRENTE_GRAUS = 12.0
 piloto.LIMITE_TRONCO_LADO_GRAUS = 8.0
 # Teste da calibração e caixa: 5 s para subir e para descer o pé (o padrão do piloto é 3 s)
 piloto.TEMPO_TRANSICAO_CALIB_S = 5
+# Com Enter (11/11): sem tempos de ir, subir e descer; cada medida (3 s) começa no Enter,
+# no roteiro e na calibração da caixa.
+piloto.COM_ENTER = True
 piloto.ROTEIRO = piloto.montar_roteiro()
 
 if __name__ == "__main__":

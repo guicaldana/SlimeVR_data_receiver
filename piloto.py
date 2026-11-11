@@ -172,6 +172,12 @@ SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objeto
 ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
 PES_ALTURA = ["ESQ", "DIR"]         # no experimento de altura: pés que sobem nos objetos
 TEMPO_TRANSICAO_S = 3               # no experimento de altura: tempo para subir e para descer o pé
+# Com Enter (11/11): sem tempos de deslocamento, subida e descida. No roteiro, cada medida com o pé
+# em cima do objeto começa quando se aperta Enter e dura TEMPO_MEDIDA_ENTER_S; as etapas de ir,
+# subir, descer e pé no chão deixam de existir. Na calibração da caixa, Enter mede e Enter segue
+# depois de virar ou montar a caixa. False volta aos tempos fixos.
+COM_ENTER = False
+TEMPO_MEDIDA_ENTER_S = 3.0
 
 
 def montar_roteiro(alturas_cm=None):
@@ -345,6 +351,7 @@ roll_atual = {TRACKER_PEITO: None, TRACKER_QUADRIL: None}   # inclinação later
 roll_ref = {TRACKER_PEITO: 0.0, TRACKER_QUADRIL: 0.0}       # inclinação lateral na calibração
 fases_sessao = []                # (etapa, t0, t1) do roteiro guiado, no tempo da gravação
 etapa_atual = ""                 # texto curto mostrado na linha de feedback
+aguardando_enter = False         # roteiro com Enter: pausa a linha de feedback enquanto espera
 roteiro_terminou = False
 serie_altura = {}                # Série completa da altura (preenchida em calcular_sinais_completos)
 ganho_esq = 1.0                  # Fator de escala da altura do pé E (calibrado na caixa)
@@ -2049,9 +2056,12 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     """Pede um pé sobre a caixa e devolve as medianas (pipeline, osc, cadeia) brutas."""
     print(f"\n👉 SUBA o pé {lado} n{'a' if objeto == 'caixa' else 'o'} {objeto} de {altura_cm:.1f} cm (o outro pé fica no chão).")
     _aviso_sonoro(1)
-    _contagem("Subindo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
-    print("    Pé em cima: fique PARADO.")
-    _contagem("Amostragem em", 2, mostrar_altura=True)
+    if COM_ENTER:
+        input("    Pé em cima e PARADO? [Enter] para medir: ")
+    else:
+        _contagem("Subindo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
+        print("    Pé em cima: fique PARADO.")
+        _contagem("Amostragem em", 2, mostrar_altura=True)
     print("    >>> MEDINDO... fique imóvel! <<<           ", flush=True)
     global detalhe_ultima_caixa
     amostras, amostras_osc, amostras_cad, amostras_desl, amostras_tronco = [], [], [], [], []
@@ -2105,8 +2115,9 @@ def _medir_pe_na_caixa(lado, idx, altura_cm, objeto="caixa"):
     detalhe_ultima_caixa["cadeia_aj_corrigido_cm"] = _cadeia_aj_da_subida(detalhe_ultima_caixa, idx)
     print("    DESÇA o pé para o chão.")
     _aviso_sonoro(1)
-    _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
-    _contagem("Pé parado no chão:", 2, mostrar_altura=True)
+    if not COM_ENTER:   # com Enter, a próxima subida só começa no próximo Enter
+        _contagem("Descendo o pé:", max(TEMPO_TRANSICAO_CALIB_S, 1), mostrar_altura=True)
+        _contagem("Pé parado no chão:", 2, mostrar_altura=True)
     return med(amostras), med(amostras_osc), med(amostras_cad)
 
 
@@ -2129,11 +2140,17 @@ def calibrar_ganho_caixa():
                     if k in INSTRUCOES_CAIXA:
                         print(f"    {INSTRUCOES_CAIXA[k]}")
                         _aviso_sonoro(1)
-                        _contagem("Montando a caixa:", TEMPO_MONTAR_CAIXA_S.get(k, TEMPO_VIRAR_CAIXA_S))
+                        if COM_ENTER:
+                            input("    Caixa montada? [Enter] para seguir: ")
+                        else:
+                            _contagem("Montando a caixa:", TEMPO_MONTAR_CAIXA_S.get(k, TEMPO_VIRAR_CAIXA_S))
                     else:
                         print(f"    VIRE a caixa para ficar com {h:.1f} cm de altura.")
                         _aviso_sonoro(1)
-                        _contagem("Virando a caixa:", TEMPO_VIRAR_CAIXA_S)
+                        if COM_ENTER:
+                            input("    Caixa virada? [Enter] para seguir: ")
+                        else:
+                            _contagem("Virando a caixa:", TEMPO_VIRAR_CAIXA_S)
             for lado, idx in (("ESQUERDO", 0), ("DIREITO", 1)):
                 _, m_osc, m_cad = _medir_pe_na_caixa(lado, idx, h)
                 subidas_caixa.append((("ESQ", "DIR")[idx], h, dict(detalhe_ultima_caixa)))
@@ -2569,9 +2586,51 @@ def _aviso_sonoro(vezes=1):
         print("\a" * vezes, end="", flush=True)
 
 
+def _executar_roteiro_enter():
+    """Roteiro com Enter: só as medidas com o pé em cima do objeto; cada uma começa no Enter."""
+    global etapa_atual, roteiro_terminou, aguardando_enter
+    medidas = [(n, ins) for n, _, ins in ROTEIRO if n.startswith("caixa_")]
+    print(f"\n   📋 Roteiro com Enter: {len(medidas)} medidas de {TEMPO_MEDIDA_ENTER_S:.0f} s.\n")
+    obj_anterior = None
+    for i, (nome, instrucao) in enumerate(medidas):
+        if not rodando:
+            return
+        obj = nome.rsplit("_", 1)[-1]
+        if obj != obj_anterior and obj.isdigit() and ALTURAS_TESTE_CM:
+            j = int(obj)
+            if 1 <= j <= len(ALTURAS_TESTE_CM):
+                print(f"\n\n   === Vá até o objeto de {ALTURAS_TESTE_CM[j - 1]:.1f} cm (tronco reto) ===")
+            obj_anterior = obj
+        aguardando_enter = True
+        print(" " * 120, end="\r")
+        print(f"\n   ▶ [{i + 1}/{len(medidas)}] SUBA: {instrucao}")
+        try:
+            input("     Pé em cima, PARADO e tronco reto? [Enter] para medir: ")
+        except EOFError:
+            pass
+        aguardando_enter = False
+        if not rodando:
+            return
+        _aviso_sonoro(2)
+        t0 = time.time() - tempo_inicial
+        fim = time.time() + TEMPO_MEDIDA_ENTER_S
+        while rodando and time.time() < fim:
+            etapa_atual = f"MEDINDO, fique parado {fim - time.time():3.1f}s"
+            time.sleep(0.05)
+        fases_sessao.append((nome, t0, time.time() - tempo_inicial))
+        etapa_atual = ""
+        _aviso_sonoro(1)
+        print("\n     ✔ Medido. DESÇA o pé para o chão.")
+    _aviso_sonoro(3)
+    print("\n\n   ✅ Roteiro concluído. Encerrando a gravação...")
+    roteiro_terminou = True
+
+
 def executar_roteiro():
     """Conduz as etapas do ROTEIRO com tempo fixo e guarda o início e o fim de cada uma."""
     global etapa_atual, roteiro_terminou
+    if COM_ENTER and EXPERIMENTO == "altura":
+        return _executar_roteiro_enter()
     total = sum(seg for _, seg, _ in ROTEIRO)
     print(f"\n   📋 Roteiro guiado: {len(ROTEIRO)} etapas, {total:.0f} s no total.\n")
     for i, (nome, segundos, instrucao) in enumerate(ROTEIRO):
@@ -2670,7 +2729,8 @@ def avaliar_altura_conhecida():
         cond, pe, j = info
         ref = ALTURAS_TESTE_CM[j - 1] if j and j <= len(ALTURAS_TESTE_CM) else ALTURA_CAIXA_CM
         rep = 1 + sum(1 for l in linhas if l[0] == ref and l[2] == pe)
-        m = (t > t0 + 2.0) & (t < t1 - 0.5)
+        # Tempos fixos: a etapa começa com o pé ainda subindo (descarta 2 s). Com Enter, o pé já está parado.
+        m = (t > t0 + (0.3 if (t1 - t0) < 5.0 else 2.0)) & (t < t1 - (0.2 if (t1 - t0) < 5.0 else 0.5))
         if not np.any(m):
             continue
         dif = float(np.median((hd - he)[m]))
@@ -2975,7 +3035,8 @@ def main():
 
     try:
         while not roteiro_terminou:
-            mostrar_feedback()
+            if not aguardando_enter:
+                mostrar_feedback()
             time.sleep(0.005)
         raise KeyboardInterrupt
     except KeyboardInterrupt:
