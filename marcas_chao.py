@@ -33,6 +33,26 @@ PEGADAS_POR_CIRCUITO = 20
 COMPRIMENTO_FIXO_CM = {"A": 30, "B": 40, "C": 50}   # distância entre os calcanhares
 BLOCOS = {c: [(comp, PEGADAS_POR_CIRCUITO)] for c, comp in COMPRIMENTO_FIXO_CM.items()}
 CIRCUITOS = {c: montar_circuito(b) for c, b in BLOCOS.items()}
+# Circuito único (12/11): um corredor com 22 pegadas e três trechos em sequência, sem remontar as
+# placas. As 2 primeiras e as 2 últimas pegadas só dão o ritmo (arrancada e parada) e ficam fora da
+# análise; as 18 do meio ficam 6 em cada trecho (passos para as pegadas 3-8 a 30 cm, 9-14 a 40 cm e
+# 15-20 a 50 cm). Total 8,80 m.
+BLOCOS_UNICO = [(30, 8), (40, 6), (50, 8)]
+CIRCUITO_UNICO = montar_circuito(BLOCOS_UNICO)
+PEGADAS_GUIA = 2   # em cada ponta
+
+
+def trecho_do_passo(k, percurso=None):
+    """Espaçamento (cm) do passo que chega na pegada k (1 = primeira depois da partida)."""
+    m = percurso or CIRCUITO_UNICO
+    return m[k][0] - m[k - 1][0]
+
+
+def passo_valido(k, percurso=None, guia=PEGADAS_GUIA):
+    n = len(percurso or CIRCUITO_UNICO) - 1
+    return guia < k <= n - guia
+
+
 # Percurso usado nos testes de 20/10/2026
 CIRCUITOS["20-10"] = [(0, "DIR"), (45, "ESQ"), (95, "DIR"), (150, "ESQ"), (190, "DIR"), (240, "ESQ"),
                       (285, "DIR"), (330, "ESQ"), (380, "DIR"), (410, "ESQ")]

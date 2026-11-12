@@ -162,6 +162,8 @@ SORTEAR_ORDEM_CIRCUITOS = True      # ordem sorteada por participante, para evit
 ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 # Familiarização mais curta (12/11): só o circuito de 30 cm (A) no comprimento do passo
 CIRCUITOS_FAMILIARIZACAO = ["A"]
+DESCREVER_CIRCUITO = None   # função(c) -> texto do início da caminhada (None = "CIRCUITO c (x cm)")
+APOS_CAMINHADA = None       # função(c) chamada logo depois de cada caminhada com Enter
 # Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
 # As três alturas ainda serão definidas (entre 15 e 25 cm); todas são digitadas no início da coleta.
 ALTURAS_TESTE_PADRAO_CM = [None, None, None]
@@ -2633,7 +2635,7 @@ def _executar_roteiro_enter():
 
     Caminhada: Enter começa (pessoa parada no início) e Enter termina (pés juntos no fim).
     Pé no objeto: Enter mede TEMPO_MEDIDA_ENTER_S com o pé já parado em cima."""
-    global etapa_atual, roteiro_terminou
+    global etapa_atual, roteiro_terminou, aguardando_enter
     etapas = [(n, ins) for n, _, ins in ROTEIRO if n.startswith(("caminhada", "caixa_"))]
     print(f"\n   📋 Roteiro com Enter: {len(etapas)} etapas.\n")
     obj_anterior = None
@@ -2642,7 +2644,9 @@ def _executar_roteiro_enter():
             return
         if nome.startswith("caminhada"):
             c = nome.rsplit("_", 1)[-1]
-            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] Talco no calcanhar. Vá até o início do CIRCUITO {c} ({marcas_chao.COMPRIMENTO_FIXO_CM.get(c, '')} cm), calcanhar D na placa 0, e fique parado.")
+            onde = (DESCREVER_CIRCUITO(c) if DESCREVER_CIRCUITO
+                    else f"CIRCUITO {c} ({marcas_chao.COMPRIMENTO_FIXO_CM.get(c, '')} cm)")
+            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] Talco no calcanhar. Vá até o início do {onde}, calcanhar D na placa 0, e fique parado.")
             _esperar_enter("     Pronto para caminhar? [Enter] para COMEÇAR: ")
             if not rodando:
                 return
@@ -2655,6 +2659,12 @@ def _executar_roteiro_enter():
             etapa_atual = ""
             _aviso_sonoro(1)
             _contar_passos_caminhada(c, t0, time.time() - tempo_inicial)
+            if APOS_CAMINHADA:   # ex.: medidas do talco logo depois de cada passagem
+                aguardando_enter = True
+                try:
+                    APOS_CAMINHADA(c)
+                finally:
+                    aguardando_enter = False
             continue
         obj = nome.rsplit("_", 1)[-1]
         if obj != obj_anterior and obj.isdigit() and ALTURAS_TESTE_CM:
