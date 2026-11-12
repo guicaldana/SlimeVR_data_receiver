@@ -3118,8 +3118,7 @@ def main():
             time.sleep(0.005)
         raise KeyboardInterrupt
     except KeyboardInterrupt:
-        with lock:
-            rodando = False  # a partir daqui as threads de captura não acrescentam mais nada
+        encerrar_captura()
         print("\n\n[*] Captura concluída! Sincronizando sinais biométricos e calculando métricas...", flush=True)
 
         if proc_node:
@@ -3130,6 +3129,20 @@ def main():
 
         processar_coleta()
         seguir_para_coleta()
+
+
+def encerrar_captura():
+    """Para a captura sem ficar preso no lock (12/11: no Windows, com centenas de pacotes OSC por
+    segundo, cada um numa thread disputando o lock, o programa ficou parado em 'with lock' no fim
+    do roteiro). A troca do booleano é atômica; o lock só é usado, com tempo máximo, para esperar
+    um pacote que esteja no meio da gravação, e os servidores OSC/VMC são desligados em seguida."""
+    global rodando
+    rodando = False   # a partir daqui as threads de captura não acrescentam mais nada
+    if lock.acquire(timeout=2.0):
+        lock.release()
+    for srv in list(_servidores):   # sem servidor, não nascem mais threads disputando o lock
+        threading.Thread(target=srv.shutdown, daemon=True).start()
+    time.sleep(0.1)
 
 
 def seguir_para_coleta():
