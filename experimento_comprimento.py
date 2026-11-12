@@ -8,14 +8,15 @@ e as 2 últimas pegadas só dão o ritmo (arrancada e parada) e ficam fora da an
 passos do meio, 6 em cada trecho (pegadas 3-8, 9-14 e 15-20).
 
 Coleta (mesmo cadastro e cálculos do piloto.py):
-  1. nome e altura do participante e rodada (1 = familiarização, uma passagem; 2 = coleta, três passagens);
+  1. nome e altura do participante e rodada (1 = familiarização, uma passagem SEM talco e sem medidas;
+     2 = coleta, três passagens com talco);
   2. calibração estática (os dois pés no chão), sem caixa;
   3. em cada passagem: talco no calcanhar, calcanhar D na placa 0 → [Enter] começa → caminha pisando
      nas placas, no ritmo → para com os pés juntos depois da última → [Enter] termina; a tela mostra
      os passos contados;
   4. logo depois de cada passagem, o programa pede o d das pegadas 2 a 20 (borda de trás da placa até
      a borda de trás do calcanhar no talco) e só então o talco é limpo para a próxima passagem.
-     Passo real (pegada k) = espaçamento + d(k) − d(k−1). Na familiarização, medir é opcional.
+     Passo real (pegada k) = espaçamento + d(k) − d(k−1). Na familiarização não há talco nem medidas.
   5. no fim da familiarização, [Enter] já abre a coleta com o mesmo participante (gancho do piloto.py).
 
 O comprimento do sistema sai de duas formas e as duas são comparadas com o real:
@@ -154,15 +155,16 @@ def medir_passagem(pasta, passagem):
     return True
 
 
+def _familiarizacao():
+    return (piloto.PARTICIPANTE or {}).get("rodada") == "familiarizacao"
+
+
 def _apos_caminhada(c):
-    """Chamado pelo roteiro logo depois de cada passagem: mede o talco antes de limpar as placas."""
+    """Chamado pelo roteiro logo depois de cada passagem: mede o talco antes de limpar as placas.
+    Na familiarização (12/11) a passagem é sem talco e não há medidas."""
     pasta = piloto.PASTA_COLETA
-    familiar = (piloto.PARTICIPANTE or {}).get("rodada") == "familiarizacao"
-    if familiar:
-        r = input("\n    Familiarização: medir as pegadas desta passagem? [Enter] sim | [p] pular: ").strip().lower()
-        if r.startswith("p"):
-            print("    🧹 Limpe o talco das placas.")
-            return
+    if _familiarizacao():
+        return
     terminou = medir_passagem(pasta, c)
     if terminou:
         print(f"    ✔ Passagem {c[1:]} medida. 🧹 Limpe o talco das placas antes da próxima passagem.")
@@ -172,6 +174,7 @@ def _apos_caminhada(c):
 
 
 piloto.APOS_CAMINHADA = _apos_caminhada
+piloto.PREPARO_CAMINHADA = lambda: "SEM talco (familiarização). " if _familiarizacao() else "Talco no calcanhar. "
 
 
 # ----------------------------- tabela de pegadas -----------------------------
@@ -265,6 +268,9 @@ def _processar():
     linhas = _preencher_real(_linhas_sistema(), _ler_medidas(pasta))
     _escrever_pegadas(pasta, linhas)
     gravadas = list(dict.fromkeys(l["passagem"] for l in linhas))
+    if _familiarizacao():
+        print("    Familiarização sem talco: só os passos do sistema foram salvos (sem análise de erro).")
+        return
     if _medidas_completas(pasta, gravadas):
         analisar(pasta)
     elif any(l["real_cm"] for l in linhas):
