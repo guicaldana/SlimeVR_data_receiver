@@ -164,6 +164,7 @@ ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
 CIRCUITOS_FAMILIARIZACAO = ["A"]
 DESCREVER_CIRCUITO = None   # função(c) -> texto do início da caminhada (None = "CIRCUITO c (x cm)")
 APOS_CAMINHADA = None       # função(c) chamada logo depois de cada caminhada com Enter
+PE_PARTIDA = "D"            # pé cujo calcanhar fica na partida (o outro dá o primeiro passo)
 PREPARO_CAMINHADA = None    # função() -> texto antes de cada caminhada (None = "Talco no calcanhar. ")
 # Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
 # As três alturas ainda serão definidas (entre 15 e 25 cm); todas são digitadas no início da coleta.
@@ -2648,7 +2649,7 @@ def _executar_roteiro_enter():
             onde = (DESCREVER_CIRCUITO(c) if DESCREVER_CIRCUITO
                     else f"CIRCUITO {c} ({marcas_chao.COMPRIMENTO_FIXO_CM.get(c, '')} cm)")
             preparo = PREPARO_CAMINHADA() if PREPARO_CAMINHADA else "Talco no calcanhar. "
-            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] {preparo}Vá até o início do {onde}, calcanhar D na placa 0, e fique parado.")
+            print(f"\n\n   ▶ [{i + 1}/{len(etapas)}] {preparo}Vá até o início do {onde}, calcanhar {PE_PARTIDA} na placa 0, e fique parado.")
             _esperar_enter("     Pronto para caminhar? [Enter] para COMEÇAR: ")
             if not rodando:
                 return

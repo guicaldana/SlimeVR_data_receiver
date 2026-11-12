@@ -2,7 +2,8 @@
 Experimento de comprimento do passo: um corredor único de 22 placas de EVA com três trechos em
 sequência (30, 40 e 50 cm entre os calcanhares), com talco no calcanhar e o d de cada pegada medido com fita.
 
-Corredor (12/11): partida (calcanhar D na placa 0) e 22 pegadas, primeiro passo do pé E. Os passos
+Corredor (12/11): partida (calcanhar E na placa 0) e 22 pegadas, primeiro passo do pé D
+(marcas_chao.PRIMEIRO_PE_UNICO; pegadas ímpares do pé D). Os passos
 que chegam nas pegadas 1-8 são de 30 cm, 9-14 de 40 cm e 15-22 de 50 cm (8,80 m). As 2 primeiras
 e as 2 últimas pegadas só dão o ritmo (arrancada e parada) e ficam fora da análise; entram os 18
 passos do meio, 6 em cada trecho (pegadas 3-8, 9-14 e 15-20).
@@ -11,7 +12,7 @@ Coleta (mesmo cadastro e cálculos do piloto.py):
   1. nome e altura do participante e rodada (1 = familiarização, uma passagem SEM talco e sem medidas;
      2 = coleta, três passagens com talco);
   2. calibração estática (os dois pés no chão), sem caixa;
-  3. em cada passagem: talco no calcanhar, calcanhar D na placa 0 → [Enter] começa → caminha pisando
+  3. em cada passagem: talco no calcanhar, calcanhar E na placa 0 → [Enter] começa → caminha pisando
      nas placas, no ritmo → para com os pés juntos depois da última → [Enter] termina; a tela mostra
      os passos contados;
   4. logo depois de cada passagem, o programa pede o d das pegadas 2 a 20 (borda de trás da placa até
@@ -66,6 +67,7 @@ piloto.ORDEM_CIRCUITOS = list(PASSAGENS_COLETA)
 piloto.SORTEAR_ORDEM_CIRCUITOS = False   # as passagens são iguais: nada a sortear
 piloto.TEMPO_CAMINHADA_S = {p: 30 for p in PASSAGENS_COLETA}
 piloto.DESCREVER_CIRCUITO = lambda c: f"CORREDOR (passagem {c[1:]}, 22 pegadas: 30, 40 e 50 cm)"
+piloto.PE_PARTIDA = "E" if PERCURSO[0][1] == "ESQ" else "D"
 piloto.ROTEIRO = piloto.montar_roteiro()
 
 NOME_PEGADAS = "pegadas.csv"

@@ -13,12 +13,13 @@ anteroposterior entre os dois pés, que é exatamente essa distância entre marc
 # Depois da última marca a pessoa junta os pés; esse passo de parada não conta.
 
 
-def montar_circuito(blocos):
+def montar_circuito(blocos, primeiro="ESQ"):
     """Monta as marcas a partir de blocos (comprimento cm, número de passos).
 
-    O primeiro passo é do pé E, e os pés alternam.
+    O primeiro passo é do pé `primeiro` (o outro fica na partida), e os pés alternam.
     """
-    marcas, pos, pe = [(0, "DIR")], 0, "ESQ"
+    outro = "DIR" if primeiro == "ESQ" else "ESQ"
+    marcas, pos, pe = [(0, outro)], 0, primeiro
     for comp, n in blocos:
         for _ in range(n):
             pos += comp
@@ -38,7 +39,10 @@ CIRCUITOS = {c: montar_circuito(b) for c, b in BLOCOS.items()}
 # análise; as 18 do meio ficam 6 em cada trecho (passos para as pegadas 3-8 a 30 cm, 9-14 a 40 cm e
 # 15-20 a 50 cm). Total 8,80 m.
 BLOCOS_UNICO = [(30, 8), (40, 6), (50, 8)]
-CIRCUITO_UNICO = montar_circuito(BLOCOS_UNICO)
+# Pé do primeiro passo (12/11: no chão do laboratório o primeiro passo é do pé DIREITO, e o calcanhar
+# ESQUERDO fica na partida; as pegadas ímpares são do pé D). Trocar para "ESQ" se o chão for o espelho.
+PRIMEIRO_PE_UNICO = "DIR"
+CIRCUITO_UNICO = montar_circuito(BLOCOS_UNICO, PRIMEIRO_PE_UNICO)
 PEGADAS_GUIA = 2   # em cada ponta
 
 
