@@ -15,7 +15,9 @@ Usa os mesmos cálculos e o mesmo cadastro do piloto.py:
      dos objetos é sorteada;
   4. tudo com Enter (COM_ENTER): o pé sobe, fica parado e o Enter mede 3 s; sem tempos de
      deslocamento, subida e descida;
-  5. sem teste da calibração no objeto de 7 cm antes do roteiro (VERIFICAR_CALIBRACAO = False, 11/11).
+  5. sem teste da calibração no objeto de 7 cm antes do roteiro (VERIFICAR_CALIBRACAO = False, 11/11);
+  6. no fim da familiarização, [Enter] já abre a coleta com o mesmo participante e as mesmas
+     alturas, sem novo cadastro (GANCHO_COLETA, 12/11); a calibração é feita de novo.
 Saída em dados/participantes/<Nome>/<AAAAMMDD_HHMMSS>_altura_<rodada>/, com
 altura_conhecida.csv, altura_objetos.png e relatorio.txt.
 

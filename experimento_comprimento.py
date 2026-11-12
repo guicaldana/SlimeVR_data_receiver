@@ -7,6 +7,8 @@ Coleta (mesmo cadastro e cálculos do piloto.py):
   2. calibração estática (os dois pés no chão), sem caixa;
   3. em cada circuito: pessoa parada com o calcanhar D na placa 0 → [Enter] começa → caminha pisando
      nas placas → para com os pés juntos → [Enter] termina. Talco no calcanhar antes de cada circuito.
+No fim da familiarização (depois das medidas), [Enter] já abre a coleta com o mesmo participante,
+sem novo cadastro (GANCHO_COLETA, 12/11); a calibração é feita de novo.
 Depois da gravação, o programa pede, circuito por circuito, o d de cada pegada: distância da borda de
 trás da placa até a borda de trás do calcanhar no talco. Passo real = espaçamento + d atual − d anterior.
 

@@ -171,6 +171,9 @@ ALTURAS_TESTE_CM = []               # definidas no início da coleta
 EXPERIMENTO = "completo"
 REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada pé em cada objeto
 REPETICOES_ALTURA_FAMILIARIZACAO = 1   # 12/11: na familiarização, cada pé sobe uma vez só em cada objeto
+# 12/11: no fim da familiarização, Enter já abre a coleta com o mesmo participante (sem novo cadastro)
+GANCHO_COLETA = True
+ENV_CONTINUAR = "PILOTO_CONTINUAR_COLETA"   # cadastro passado da familiarização para a coleta
 SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
 ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
 PES_ALTURA = ["ESQ", "DIR"]         # no experimento de altura: pés que sobem nos objetos
@@ -1808,11 +1811,15 @@ def graficos_marcha(t_passo, clear_esq_cm, clear_dir_cm, tempos_impactos, dist_i
 
 
 # ----------------- EXECUÇÃO PRINCIPAL -----------------
+_servidores = []   # servidores OSC/VMC abertos, para liberar as portas antes de seguir para a coleta
+
+
 def rodar_servidor(porta, handler):
     disp = Dispatcher()
     disp.set_default_handler(handler)
     try:
         server = ThreadingOSCUDPServer((IP, porta), disp)
+        _servidores.append(server)
         server.serve_forever()
     except OSError as e:
         print(f"\n[AVISO] Erro na porta {porta}: {e}")
@@ -3000,20 +3007,34 @@ def salvar_dados_brutos():
 def main():
     global rodando, PARTICIPANTE, REPETICOES_ALTURA, ORDEM_CIRCUITOS, ROTEIRO
     # 0. Cadastro do participante e pasta da coleta
+    continuar = os.environ.pop(ENV_CONTINUAR, None)
     if PEDIR_PARTICIPANTE:
-        esqueleto = cadastro.ler_esqueleto_slimevr() if LER_ALTURA_SLIMEVR else None
-        if LER_ALTURA_SLIMEVR and esqueleto is None:
-            print("   [Aviso] Não consegui ler a altura do SlimeVR (o servidor está aberto?). Digite a altura.")
-        PARTICIPANTE = cadastro.pedir_participante(esqueleto=esqueleto)
-        PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
-        # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
-        anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
-        padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
-        if EXPERIMENTO != "comprimento":   # só caminhada: sem objetos
-            print("   Alturas dos objetos de teste:")
-            PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
-                                              for h in padroes]
-            definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
+        if continuar:
+            # Veio direto da familiarização: mesmo participante e mesmas alturas, rodada de coleta
+            PARTICIPANTE = json.loads(continuar)
+            PARTICIPANTE["rodada"] = "coleta"
+            print("-" * 75)
+            print(f"   COLETA logo após a familiarização: {PARTICIPANTE['nome']}"
+                  f" | altura {PARTICIPANTE['altura_cm']:.1f} cm")
+            print("-" * 75)
+            if EXPERIMENTO != "comprimento" and PARTICIPANTE.get("alturas_teste_cm"):
+                print("   Alturas dos objetos de teste: "
+                      + ", ".join(f"{h:.1f}" for h in PARTICIPANTE["alturas_teste_cm"]) + " cm")
+                definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
+        else:
+            esqueleto = cadastro.ler_esqueleto_slimevr() if LER_ALTURA_SLIMEVR else None
+            if LER_ALTURA_SLIMEVR and esqueleto is None:
+                print("   [Aviso] Não consegui ler a altura do SlimeVR (o servidor está aberto?). Digite a altura.")
+            PARTICIPANTE = cadastro.pedir_participante(esqueleto=esqueleto)
+            PARTICIPANTE["rodada"] = cadastro.pedir_rodada()
+            # Na rodada de coleta, Enter repete as alturas usadas na coleta anterior do participante
+            anterior = cadastro.ultima_coleta(PARTICIPANTE["nome"]) or {}
+            padroes = anterior.get("alturas_teste_cm") or ALTURAS_TESTE_PADRAO_CM
+            if EXPERIMENTO != "comprimento":   # só caminhada: sem objetos
+                print("   Alturas dos objetos de teste:")
+                PARTICIPANTE["alturas_teste_cm"] = [cadastro.pedir_altura_teste(h, faixa=FAIXA_ALTURAS_TESTE_CM)
+                                                  for h in padroes]
+                definir_alturas_teste(PARTICIPANTE["alturas_teste_cm"])
         PARTICIPANTE["experimento"] = EXPERIMENTO
         if EXPERIMENTO == "altura":
             # Familiarização na ordem 1, 2, 3; na rodada de coleta a ordem dos objetos é sorteada
@@ -3108,6 +3129,33 @@ def main():
                 pass
 
         processar_coleta()
+        seguir_para_coleta()
+
+
+def seguir_para_coleta():
+    """No fim da familiarização, Enter abre a rodada de coleta com o mesmo participante.
+
+    A coleta roda num processo novo (servidores, SolarXR e calibração começam do zero); só o
+    cadastro (nome, altura e alturas dos objetos) é aproveitado."""
+    if not (GANCHO_COLETA and PARTICIPANTE and PARTICIPANTE.get("rodada") == "familiarizacao"):
+        return
+    print("\n" + "=" * 90)
+    print(f"   ✅ Familiarização concluída ({PARTICIPANTE['nome']}).")
+    r = input("   [Enter] começar a COLETA agora, mesmo participante | [s] sair: ").strip().lower()
+    if r.startswith("s"):
+        return
+    for srv in _servidores:   # libera as portas 9000 e 39539 para a coleta
+        try:
+            srv.shutdown()
+            srv.server_close()
+        except Exception:
+            pass
+    cad = {k: v for k, v in PARTICIPANTE.items()
+           if k in ("nome", "altura_cm", "altura_fonte", "slimevr", "alturas_teste_cm")}
+    env = dict(os.environ, **{ENV_CONTINUAR: json.dumps(cad, ensure_ascii=False)})
+    print("=" * 90 + "\n")
+    rc = subprocess.run([sys.executable] + sys.argv, env=env).returncode
+    sys.exit(rc)
 
 
 def processar_coleta():
