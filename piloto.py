@@ -160,6 +160,8 @@ TEMPO_VOLTA_S = 20
 CIRCUITOS_COLETA = ["A", "B", "C"]
 SORTEAR_ORDEM_CIRCUITOS = True      # ordem sorteada por participante, para evitar viés de ordem
 ORDEM_CIRCUITOS = list(CIRCUITOS_COLETA)
+# Familiarização mais curta (12/11): só o circuito de 30 cm (A) no comprimento do passo
+CIRCUITOS_FAMILIARIZACAO = ["A"]
 # Alturas conhecidas de teste (cm), na ordem do roteiro. None = perguntar no terminal.
 # As três alturas ainda serão definidas (entre 15 e 25 cm); todas são digitadas no início da coleta.
 ALTURAS_TESTE_PADRAO_CM = [None, None, None]
@@ -168,6 +170,7 @@ ALTURAS_TESTE_CM = []               # definidas no início da coleta
 # Experimento: "completo" (circuitos + objetos) ou "altura" (só objetos, ver experimento_altura.py)
 EXPERIMENTO = "completo"
 REPETICOES_ALTURA = 3               # no experimento de altura: subidas de cada pé em cada objeto
+REPETICOES_ALTURA_FAMILIARIZACAO = 1   # 12/11: na familiarização, cada pé sobe uma vez só em cada objeto
 SORTEAR_ORDEM_OBJETOS = True        # no experimento de altura: ordem dos objetos sorteada na coleta
 ORDEM_OBJETOS = []                  # índices (1, 2, 3) na ordem do roteiro; vazio = 1, 2, 3
 PES_ALTURA = ["ESQ", "DIR"]         # no experimento de altura: pés que sobem nos objetos
@@ -2956,7 +2959,7 @@ def salvar_dados_brutos():
                 w.writerow(linha)
         entrada = {
             "participante": PARTICIPANTE,
-            "circuitos": CIRCUITOS_COLETA,
+            "circuitos": list(ORDEM_CIRCUITOS) if EXPERIMENTO != "altura" else CIRCUITOS_COLETA,
             "ordem_circuitos": ORDEM_CIRCUITOS,
             "experimento": EXPERIMENTO,
             "ordem_objetos": ORDEM_OBJETOS,
@@ -2995,7 +2998,7 @@ def salvar_dados_brutos():
 
 
 def main():
-    global rodando, PARTICIPANTE
+    global rodando, PARTICIPANTE, REPETICOES_ALTURA, ORDEM_CIRCUITOS, ROTEIRO
     # 0. Cadastro do participante e pasta da coleta
     if PEDIR_PARTICIPANTE:
         esqueleto = cadastro.ler_esqueleto_slimevr() if LER_ALTURA_SLIMEVR else None
@@ -3016,16 +3019,24 @@ def main():
             # Familiarização na ordem 1, 2, 3; na rodada de coleta a ordem dos objetos é sorteada
             if PARTICIPANTE["rodada"] == "coleta" and SORTEAR_ORDEM_OBJETOS:
                 sortear_ordem_objetos()
+            if PARTICIPANTE["rodada"] == "familiarizacao":
+                REPETICOES_ALTURA = REPETICOES_ALTURA_FAMILIARIZACAO
+                ROTEIRO = montar_roteiro(ALTURAS_TESTE_CM or None)
+                print(f"   Familiarização: cada pé sobe {REPETICOES_ALTURA} vez(es) em cada objeto")
             PARTICIPANTE["ordem_objetos"] = list(ORDEM_OBJETOS)
             print("   Ordem dos objetos: " + " -> ".join(
                 f"{ALTURAS_TESTE_CM[j - 1]:.1f} cm" for j in (ORDEM_OBJETOS or [1, 2, 3])) + "\n")
         else:
-            # Familiarização em ordem fixa (A, B, C); a rodada de coleta tem a ordem sorteada
-            if PARTICIPANTE["rodada"] == "coleta" and SORTEAR_ORDEM_CIRCUITOS:
+            # Familiarização só com o circuito A (30 cm, 12/11); a rodada de coleta tem os três em ordem sorteada
+            if PARTICIPANTE["rodada"] == "familiarizacao":
+                ORDEM_CIRCUITOS = list(CIRCUITOS_FAMILIARIZACAO)
+                ROTEIRO = montar_roteiro(ALTURAS_TESTE_CM or None)
+                texto_ordem = "Circuitos da familiarização"
+            elif SORTEAR_ORDEM_CIRCUITOS:
                 sortear_ordem_circuitos()
                 texto_ordem = "Ordem sorteada dos circuitos"
             else:
-                texto_ordem = "Ordem dos circuitos (familiarização, fixa)"
+                texto_ordem = "Ordem dos circuitos (fixa)"
             PARTICIPANTE["ordem_circuitos"] = list(ORDEM_CIRCUITOS)
             print(f"   {texto_ordem}: {' -> '.join(ORDEM_CIRCUITOS)}\n")
         pasta = cadastro.criar_pasta_coleta(PARTICIPANTE)

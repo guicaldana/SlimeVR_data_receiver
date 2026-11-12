@@ -3,7 +3,7 @@ Experimento de comprimento do passo: três circuitos de placas de EVA (30, 40 e 
 calcanhares, 20 pegadas cada), com talco no calcanhar e o d de cada pegada medido com fita.
 
 Coleta (mesmo cadastro e cálculos do piloto.py):
-  1. nome e altura do participante e rodada (1 = familiarização, ordem A-B-C; 2 = coleta, ordem sorteada);
+  1. nome e altura do participante e rodada (1 = familiarização, só o circuito de 30 cm; 2 = coleta, os três em ordem sorteada);
   2. calibração estática (os dois pés no chão), sem caixa;
   3. em cada circuito: pessoa parada com o calcanhar D na placa 0 → [Enter] começa → caminha pisando
      nas placas → para com os pés juntos → [Enter] termina. Talco no calcanhar antes de cada circuito.

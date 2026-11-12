@@ -11,7 +11,8 @@ Usa os mesmos cálculos e o mesmo cadastro do piloto.py:
      conferência e o relatório mostram as duas alturas já corrigidas (OSC e cadeia);
   3. em cada objeto, os dois pés sobem alternados (E, depois D), REPETICOES_ALTURA vezes
      cada (tronco reto); o pé que fica no chão é a referência. Só o pé E: PES_ALTURA = ["ESQ"].
-     Na rodada de coleta a ordem dos objetos é sorteada;
+     Na familiarização cada pé sobe uma vez só em cada objeto (12/11); na rodada de coleta a ordem
+     dos objetos é sorteada;
   4. tudo com Enter (COM_ENTER): o pé sobe, fica parado e o Enter mede 3 s; sem tempos de
      deslocamento, subida e descida;
   5. sem teste da calibração no objeto de 7 cm antes do roteiro (VERIFICAR_CALIBRACAO = False, 11/11).
