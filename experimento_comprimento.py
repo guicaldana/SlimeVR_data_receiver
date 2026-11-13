@@ -366,7 +366,19 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Experimento de comprimento do passo: corredor único 30/40/50 cm com talco.")
     ap.add_argument("--medir", metavar="PASTA", help="completa as medidas do talco de uma coleta")
     ap.add_argument("--analisar", metavar="PASTA", help="refaz só a tabela e a análise de uma coleta medida")
+    ap.add_argument("--passagens", type=int, metavar="N",
+                    help="número de passagens da coleta (padrão 3), ex. para repetir só as que falharam")
     args = ap.parse_args()
+    if args.passagens:
+        # 13/11: repetir só parte das passagens (ex. tracker congelado em P1 e P2)
+        PASSAGENS_COLETA[:] = [f"P{i}" for i in range(1, args.passagens + 1)]
+        for _p in PASSAGENS_COLETA:
+            marcas_chao.CIRCUITOS[_p] = PERCURSO
+            marcas_chao.DESCRICAO[_p] = f"corredor 30/40/50 cm, passagem {_p[1:]}"
+        piloto.CIRCUITOS_COLETA = list(PASSAGENS_COLETA)
+        piloto.ORDEM_CIRCUITOS = list(PASSAGENS_COLETA)
+        piloto.TEMPO_CAMINHADA_S = {p: 30 for p in PASSAGENS_COLETA}
+        piloto.ROTEIRO = piloto.montar_roteiro()
     if args.medir:
         medir_e_analisar(args.medir)
         sys.exit(0)
