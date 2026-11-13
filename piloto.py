@@ -309,7 +309,7 @@ class OneEuroFilter:
 
 # Estruturas de dados em memória
 dados = {
-    TRACKER_QUADRIL: {"t": [], "x": [], "y": [], "z": [], "pitch": [], "yaw": []},
+    TRACKER_QUADRIL: {"t": [], "x": [], "y": [], "z": [], "pitch": [], "yaw": [], "t_rot": []},
     TORNOZELO_ESQ: {"t": [], "x": [], "y": [], "z": []},
     TORNOZELO_DIR: {"t": [], "x": [], "y": [], "z": []},
     TRACKER_COXA_ESQ: {"t": [], "x": [], "y": [], "z": [], "pitch": []},
@@ -648,6 +648,7 @@ def osc_handler_9000(address, *args):
                 roll_atual[TRACKER_QUADRIL] = extrair_roll(args)
                 serie_roll_quadril["t"].append(t_rel)
                 serie_roll_quadril["roll"].append(roll_atual[TRACKER_QUADRIL])
+                dados[TRACKER_QUADRIL]["t_rot"].append(t_rel)   # 13/11: giro tem tempo próprio
                 dados[TRACKER_QUADRIL]["pitch"].append(pitch)
                 dados[TRACKER_QUADRIL]["yaw"].append(yaw)
                 rot_atual[TRACKER_QUADRIL] = (pitch, yaw)
@@ -1057,8 +1058,12 @@ def calcular_sinais_completos(d_esq, d_dir, d_quad, d_coxa_e=None, d_coxa_d=None
 
     tem_quad = len(d_quad["t"]) > 10
     if tem_quad and "yaw" in d_quad and len(d_quad["yaw"]) > 10:
-        t_q = np.array(d_quad["t"])
-        yaw_q = np.array(d_quad["yaw"])
+        # 13/11: o giro do quadril chega em mensagens próprias; usa o tempo delas (t_rot) e, se as
+        # contagens não baterem (gravações antigas), corta no menor tamanho em vez de quebrar.
+        yaw_q = np.array(d_quad["yaw"], float)
+        t_q = np.array(d_quad.get("t_rot") or d_quad["t"], float)
+        n_q = min(len(t_q), len(yaw_q))
+        t_q, yaw_q = t_q[:n_q], yaw_q[:n_q]
         yaw_i = np.interp(t_comum, t_q, yaw_q)
         rad_yaw = np.radians(yaw_i)
         fx = -np.sin(rad_yaw)
@@ -3194,7 +3199,14 @@ def processar_coleta():
 
     if len(d_esq["t"]) < 20 or len(d_dir["t"]) < 20:
         print("Dados insuficientes de passos para análise. Caminhe por mais tempo.")
+        salvar_fases()
+        salvar_dados_brutos()
         return
+
+    # 13/11: grava as entradas brutas ANTES de qualquer cálculo (uma coleta se perdeu porque o
+    # cálculo quebrou antes de salvar); depois do cálculo grava de novo, já com a série de altura.
+    salvar_fases()
+    salvar_dados_brutos()
 
     t_passo, d_passo_ap, larg_base_m, clear_esq_cm, clear_dir_cm, torn_esq_cm, torn_dir_cm, alt_quadril_cm, posturas, taxa = calcular_sinais_completos(
         d_esq, d_dir, d_quad, d_coxa_e, d_coxa_d
