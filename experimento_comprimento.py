@@ -4,9 +4,10 @@ sequência (30, 40 e 50 cm entre os calcanhares), com talco no calcanhar e o d d
 
 Corredor (12/11): partida (calcanhar E na placa 0) e 22 pegadas, primeiro passo do pé D
 (marcas_chao.PRIMEIRO_PE_UNICO; pegadas ímpares do pé D). Os passos
-que chegam nas pegadas 1-8 são de 30 cm, 9-14 de 40 cm e 15-22 de 50 cm (8,80 m). As 2 primeiras
-e as 2 últimas pegadas só dão o ritmo (arrancada e parada) e ficam fora da análise; entram os 18
-passos do meio, 6 em cada trecho (pegadas 3-8, 9-14 e 15-20).
+que chegam nas pegadas 1-8 são de 30 cm, 9-14 de 40 cm e 15-22 de 50 cm (8,80 m).
+Talco (13/11, como a equipe conta no chão): mede-se do 2º passo do pé D (pegada 3) até o último passo
+do pé D (pegada 21); as pegadas 1, 2 e 22 não são medidas. A pegada 3 é só a referência do passo 4,
+então entram na análise os 18 passos das pegadas 4-21 (5 de 30 cm, 6 de 40 cm e 7 de 50 cm).
 
 Coleta (mesmo cadastro e cálculos do piloto.py):
   1. nome e altura do participante e rodada (1 = familiarização, uma passagem SEM talco e sem medidas;
@@ -15,7 +16,7 @@ Coleta (mesmo cadastro e cálculos do piloto.py):
   3. em cada passagem: talco no calcanhar, calcanhar E na placa 0 → [Enter] começa → caminha pisando
      nas placas, no ritmo → para com os pés juntos depois da última → [Enter] termina; a tela mostra
      os passos contados;
-  4. logo depois de cada passagem, o programa pede o d das pegadas 2 a 20 (borda de trás da placa até
+  4. logo depois de cada passagem, o programa pede o d das pegadas 3 a 21 (borda de trás da placa até
      a borda de trás do calcanhar no talco) e só então o talco é limpo para a próxima passagem.
      Passo real (pegada k) = espaçamento + d(k) − d(k−1). Na familiarização não há talco nem medidas.
   5. no fim da familiarização, [Enter] já abre a coleta com o mesmo participante (gancho do piloto.py).
@@ -48,8 +49,17 @@ PASSAGENS_COLETA = ["P1", "P2", "P3"]
 PASSAGENS_FAMILIARIZACAO = ["P1"]
 PERCURSO = marcas_chao.CIRCUITO_UNICO
 N_PEGADAS = len(PERCURSO) - 1                  # 22
-GUIA = marcas_chao.PEGADAS_GUIA                # 2 em cada ponta
-PEGADAS_MEDIDAS = list(range(GUIA, N_PEGADAS - GUIA + 1))   # 2..20 (a 2 é só referência do passo 3)
+# 13/11: talco do 2º passo do pé D (pegada 3) ao último passo do pé D (pegada 21). Antes eram as
+# pegadas 2-20, mas a equipe anotava 3-21 nelas (o terminal mostrava o pé trocado): coletas de 13/11
+# feitas assim foram renumeradas (d da "pegada k" -> pegada k+1), com backup em backup_antes_renumerar.
+PEGADAS_MEDIDAS = list(range(3, N_PEGADAS))     # 3..21
+REF_TALCO = PEGADAS_MEDIDAS[0]                   # a 3 é só referência do passo 4
+
+
+def passo_valido(k):
+    """Passos analisados: os que têm o d da própria pegada e o da anterior (pegadas 4-21)."""
+    return PEGADAS_MEDIDAS[0] < k <= PEGADAS_MEDIDAS[-1]
+
 
 for _p in PASSAGENS_COLETA:
     marcas_chao.CIRCUITOS[_p] = PERCURSO
@@ -108,14 +118,14 @@ def _gravar_medidas(pasta, med):
 
 
 def medir_passagem(pasta, passagem):
-    """Pede o d das pegadas 2 a 20 desta passagem, na ordem. Resposta "d" ou "d espaçamento" (se o par
+    """Pede o d das pegadas 3 a 21 desta passagem, na ordem. Resposta "d" ou "d espaçamento" (se o par
     de placas não estiver no espaçamento do trecho). Enter vazio = pegada sem marca; v = volta;
     f = para (continua depois com --medir; não limpar as placas). Retorna True se terminou."""
     med = _ler_medidas(pasta)
     m = med.setdefault(passagem, {"d": {}, "feitas": 0})
     print("\n" + "=" * 90)
     print(f"  📏 MEDIDAS DA PASSAGEM {passagem[1:]}: d = borda de trás da placa até a borda de trás do calcanhar no talco (cm)")
-    print("     Meça reto, na direção da caminhada, da pegada 2 até a 20 (as 2 primeiras e as 2 últimas não contam).")
+    print("     Meça reto, na direção da caminhada, da pegada 3 (2º passo do pé D) até a 21 (último passo do pé D).")
     print("     Digite \"d\" ou \"d espaçamento\" (se aquele par de placas não estiver no espaçamento do trecho).")
     print("     Enter vazio = pegada sem marca de talco   v = volta   f = para (não limpe as placas)")
     print("=" * 90)
@@ -124,7 +134,7 @@ def medir_passagem(pasta, passagem):
         peg = PEGADAS_MEDIDAS[k]
         esp = float(marcas_chao.trecho_do_passo(peg, PERCURSO))
         atual = (m["d"].get(str(peg)) or [None])[0]
-        nota = " (só referência para o passo seguinte)" if peg == GUIA else ""
+        nota = " (só referência para o passo seguinte)" if peg == REF_TALCO else ""
         perg = f"    Pegada {peg:2d} pé {_pe_da_pegada(peg)}, trecho {esp:.0f} cm{nota} — d"
         try:
             r = input(f"{perg}{' [' + _fmt(atual) + ']' if atual is not None else ''}: ").strip().lower()
@@ -147,7 +157,7 @@ def medir_passagem(pasta, passagem):
         m["d"][str(peg)] = [dd, e] if dd is not None else None
         m["feitas"] = k + 1
         _gravar_medidas(pasta, med)
-        if dd is not None and peg > GUIA:
+        if dd is not None and peg > REF_TALCO:
             ant = m["d"].get(str(peg - 1))
             if ant:
                 print(f"      passo = {_fmt(e + dd - ant[0])} cm")
@@ -212,7 +222,7 @@ def _linhas_sistema():
         for k in range(1, N_PEGADAS + 1):
             ti, s, to = por_peg.get(k, (None, None, None))
             linhas.append({"passagem": p, "pegada": str(k), "trecho_cm": str(marcas_chao.trecho_do_passo(k, PERCURSO)),
-                           "valido": "1" if marcas_chao.passo_valido(k, PERCURSO) else "0",
+                           "valido": "1" if passo_valido(k) else "0",
                            "pe_da_frente": _pe_da_pegada(k), "t_s": "" if ti is None else f"{ti:.2f}",
                            "sistema_cm": _fmt(s), "sistema_toque_cm": _fmt(to)})
         n = len(casados)
@@ -223,6 +233,10 @@ def _linhas_sistema():
 def _preencher_real(linhas, med):
     for l in linhas:
         k = int(l["pegada"])
+        # trecho, pé e validade vêm sempre da regra atual (tabelas antigas tinham a faixa 3-20)
+        l["trecho_cm"] = str(marcas_chao.trecho_do_passo(k, PERCURSO))
+        l["pe_da_frente"] = _pe_da_pegada(k)
+        l["valido"] = "1" if passo_valido(k) else "0"
         m = (med.get(l["passagem"]) or {}).get("d", {})
         atual, ant = m.get(str(k)), m.get(str(k - 1))
         l["d_cm"] = _fmt(atual[0]) if atual else ""
@@ -346,7 +360,7 @@ def _analisar_metodo(linhas, chave):
 def analisar(pasta):
     linhas = ler(pasta)
     texto = [f"EXPERIMENTO DE COMPRIMENTO DO PASSO — {pasta}",
-             f"Corredor único 30/40/50 cm, 22 pegadas (2 de cada ponta fora). Passos válidos com medida de talco: {len(linhas)}",
+             f"Corredor único 30/40/50 cm, 22 pegadas; talco nas pegadas 3-21, passos 4-21 analisados. Passos válidos com medida de talco: {len(linhas)}",
              "Erro = sistema − real (cm). Fator por pé deixa-um-fora: calculado sem o próprio passo.", ""]
     resumo = {}
     for chave, titulo in METODOS:
