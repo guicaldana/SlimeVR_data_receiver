@@ -37,7 +37,7 @@ CIRCUITOS = {c: montar_circuito(b) for c, b in BLOCOS.items()}
 # Circuito único (12/11): um corredor com 22 pegadas e três trechos em sequência, sem remontar as
 # placas (passos para as pegadas 1-8 a 30 cm, 9-14 a 40 cm e 15-22 a 50 cm; total 8,80 m). Quais
 # pegadas têm talco e quais passos entram na análise fica em experimento_comprimento.py (13/11: talco
-# nas 22 pegadas, passos 3-21).
+# nas pegadas 3-21, passos 4-21).
 BLOCOS_UNICO = [(30, 8), (40, 6), (50, 8)]
 # Pé do primeiro passo (12/11: no chão do laboratório o primeiro passo é do pé DIREITO, e o calcanhar
 # ESQUERDO fica na partida; as pegadas ímpares são do pé D). Trocar para "ESQ" se o chão for o espelho.
